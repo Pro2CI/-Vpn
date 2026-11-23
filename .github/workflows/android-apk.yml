@@ -106,7 +106,7 @@ jobs:
           grep -q '^android.useAndroidX=true$' android-native/gradle.properties || echo 'android.useAndroidX=true' >> android-native/gradle.properties
           grep -q '^android.enableJetifier=true$' android-native/gradle.properties || echo 'android.enableJetifier=true' >> android-native/gradle.properties
       - name: Assemble debug APK
-        run: gradle --no-daemon -p android-native :app:assembleDebug
+        run: gradle --no-daemon -Pandroid.useAndroidX=true -Pandroid.enableJetifier=true -p android-native :app:assembleDebug
       - name: Verify APK exists
         run: test -s android-native/app/build/outputs/apk/debug/app-debug.apk
       - name: Upload installable APK
