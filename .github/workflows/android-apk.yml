@@ -107,12 +107,23 @@ jobs:
           grep -q '^android.enableJetifier=true$' android-native/gradle.properties || echo 'android.enableJetifier=true' >> android-native/gradle.properties
       - name: Assemble debug APK
         run: gradle --no-daemon -Pandroid.useAndroidX=true -Pandroid.enableJetifier=true -p android-native :app:assembleDebug
-      - name: Verify APK exists
-        run: test -s android-native/app/build/outputs/apk/debug/app-debug.apk
+      - name: Locate and verify APK
+        run: |
+          echo "Searching for APK produced by Gradle..."
+          find . -type f -name '*.apk' -print
+          APK_PATH="$(find . -type f -path '*/build/outputs/apk/debug/*.apk' -size +0c -print -quit)"
+          if [ -z "$APK_PATH" ]; then
+            echo "Gradle reported success but no debug APK was found."
+            find . -type d -path '*/build/outputs/*' -print
+            exit 1
+          fi
+          echo "Found APK: $APK_PATH"
+          ls -lh "$APK_PATH"
+          echo "VIOLET_APK_PATH=$APK_PATH" >> "$GITHUB_ENV"
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
           name: Violet-VPN-Android-APK
-          path: android-native/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.VIOLET_APK_PATH }}
           if-no-files-found: error
           retention-days: 30
