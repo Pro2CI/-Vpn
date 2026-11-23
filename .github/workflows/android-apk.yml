@@ -5,12 +5,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'src/**'
-      - 'android-native/**'
-      - 'package.json'
-      - 'vite.config.ts'
-      - '*.gradle.kts'
-      - 'settings.gradle.kts'
+      - 'Violet-VPN-source-corrected.zip'
       - '.github/workflows/android-apk.yml'
 
 permissions:
@@ -27,13 +22,29 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Extract the complete corrected source archive
+        run: |
+          test -s Violet-VPN-source-corrected.zip
+          mkdir -p /tmp/violet-source
+          unzip -q Violet-VPN-source-corrected.zip -d /tmp/violet-source
+          test -f /tmp/violet-source/violet-work/package.json
+          test -f /tmp/violet-source/violet-work/android-native/src/main/AndroidManifest.xml
+          rsync -a --delete --exclude='.git/' /tmp/violet-source/violet-work/ ./
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Build web UI
+      - name: Verify source and dependency constraints
         run: |
-          npm install --no-audit --no-fund
+          test -f package.json
+          test -f vite.config.ts
+          test -f src/main.tsx
+          test -f android-native/src/main/AndroidManifest.xml
+          node -e "const p=require('./package.json'); if(p.devDependencies.esbuild !== '0.28.2' || p.overrides?.esbuild !== '0.28.2') process.exit(1)"
+      - name: Install dependencies and build web UI
+        run: |
+          npm install --no-audit --no-fund --strict-peer-deps --package-lock=false
+          npm ls vite esbuild
           npm run build
           mkdir -p android-native/src/main/assets
           cp -a dist/. android-native/src/main/assets/
@@ -41,7 +52,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '17'
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -53,6 +64,8 @@ jobs:
           check-latest: true
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
       - name: Set up Android NDK
         uses: nttld/setup-ndk@v1
         with:
@@ -60,7 +73,10 @@ jobs:
           add-to-path: true
       - name: Build official XTLS libXray AAR
         run: |
-          git clone --depth 1 https://github.com/XTLS/libXray.git ../libXray
+          git init ../libXray
+          git -C ../libXray remote add origin https://github.com/XTLS/libXray.git
+          git -C ../libXray fetch --depth 1 origin 6e33510350d18a9b906495ff81ae9eb572144ddd
+          git -C ../libXray checkout --detach FETCH_HEAD
           cd ../libXray
           python3 build/main.py android
           test -s libXray.aar
