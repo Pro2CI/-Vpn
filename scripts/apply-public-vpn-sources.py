@@ -363,7 +363,7 @@ if "from './vpnDataPlaneCheck'" not in bridge:
     bridge = bridge.replace(import_marker, import_marker + "\nimport { verifyVpnDataPlane } from './vpnDataPlaneCheck';", 1)
 
 bridge, removed_probe = re.subn(
-    r"async function verifyVpnDataPlane\(\): Promise<void> \{[\\s\\S]*?\\n\}\n\n(?=let vpnProbeGeneration)",
+    r"async function verifyVpnDataPlane\(\): Promise<void> \{[\s\S]*?\n\}\n\n(?=let vpnProbeGeneration)",
     "",
     bridge,
     count=1,
