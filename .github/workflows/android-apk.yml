@@ -154,7 +154,7 @@ jobs:
                   env_file.write(f"{key}={value}\n")
           PY
       - name: Assemble debug APK
-        run: gradle --no-daemon -Pandroid.useAndroidX=true -Pandroid.enableJetifier=true -p android-native :app:assembleDebug
+        run: gradle --no-daemon -Dorg.gradle.jvmargs='-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8' -Pandroid.useAndroidX=true -Pandroid.enableJetifier=true -p android-native :app:assembleDebug
       - name: Locate and verify APK
         run: |
           echo "Searching for APK produced by Gradle..."
