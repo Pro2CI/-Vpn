@@ -1219,10 +1219,11 @@ auto_path.write_text(auto_source, encoding="utf-8")
 
 bridge_path = Path("src/services/androidVpnBridge.ts")
 bridge_source = bridge_path.read_text(encoding="utf-8")
-bridge_source = bridge_source.replace(
-    "  fetchSubscription?: (url: string) => string;",
-    "  fetchSubscription?: (url: string) => string;\n  checkConnectivity?: () => string;\n  testEndpoint?: (endpoint: string) => string;"
-)
+if "checkConnectivity?:" not in bridge_source and "testEndpoint?:" not in bridge_source:
+    bridge_source = bridge_source.replace(
+        "  fetchSubscription?: (url: string) => string;",
+        "  fetchSubscription?: (url: string) => string;\n  checkConnectivity?: () => string;\n  testEndpoint?: (endpoint: string) => string;"
+    )
 if "checkConnectivity?:" not in bridge_source or "testEndpoint?:" not in bridge_source:
     raise RuntimeError("Build 48: native bridge declarations missing")
 bridge_path.write_text(bridge_source, encoding="utf-8")
@@ -1530,10 +1531,11 @@ auto_path.write_text(auto_source, encoding="utf-8")
 
 bridge_path = Path("src/services/androidVpnBridge.ts")
 bridge_source = bridge_path.read_text(encoding="utf-8")
-bridge_source = bridge_source.replace(
-    "  fetchSubscription?: (url: string) => string;",
-    "  fetchSubscription?: (url: string) => string;\n  checkConnectivity?: () => string;\n  testEndpoint?: (endpoint: string) => string;"
-)
+if "checkConnectivity?:" not in bridge_source and "testEndpoint?:" not in bridge_source:
+    bridge_source = bridge_source.replace(
+        "  fetchSubscription?: (url: string) => string;",
+        "  fetchSubscription?: (url: string) => string;\n  checkConnectivity?: () => string;\n  testEndpoint?: (endpoint: string) => string;"
+    )
 if "checkConnectivity?:" not in bridge_source or "testEndpoint?:" not in bridge_source:
     raise RuntimeError("Build 48: native bridge declarations missing")
 bridge_path.write_text(bridge_source, encoding="utf-8")
