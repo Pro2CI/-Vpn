@@ -443,6 +443,12 @@ app_source, latency_props_patched = re.subn(
 )
 app_path.write_text(app_source, encoding="utf-8")
 
+print("DEBUG App.tsx around original TypeScript diagnostics:")
+for debug_index, debug_line in enumerate(app_source.splitlines(), start=1):
+    if 316 <= debug_index <= 337:
+        print(f"{debug_index}: {debug_line}")
+
+
 # Keep a soft animated halo on primary violet actions; the reduced-motion rule
 # already installed above disables it for users who request less motion.
 css_path = Path("src/index.css")
