@@ -7,6 +7,7 @@ on:
     paths:
       - 'Violet-VPN-source-corrected.zip'
       - '.github/workflows/android-apk.yml'
+      - 'scripts/apply-public-vpn-sources.py'
 
 permissions:
   contents: read
@@ -30,6 +31,8 @@ jobs:
           test -f /tmp/violet-source/violet-work/package.json
           test -f /tmp/violet-source/violet-work/android-native/src/main/AndroidManifest.xml
           rsync -a --delete --exclude='.git/' /tmp/violet-source/violet-work/ ./
+      - name: Apply public VPN source integration
+        run: python3 scripts/apply-public-vpn-sources.py
       - name: Upload extracted source for remote review
         uses: actions/upload-artifact@v4
         with:
