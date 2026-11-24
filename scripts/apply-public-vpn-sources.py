@@ -473,3 +473,35 @@ if "connectXrayShareLink" not in native_check:
     raise RuntimeError("Xray share-link converter rename did not apply")
 
 print("Filtered unsupported Hysteria2 links, normalized nullable latency props, and verified native Xray dispatch.")
+
+
+# Dynamic Android version: every CI build must upgrade over an older installation.
+gradle_path = Path("android-native/build.gradle.kts")
+gradle_text = gradle_path.read_text(encoding="utf-8")
+if "val violetBuildNumber" not in gradle_text:
+    gradle_text = gradle_text.replace(
+        "}\n\nandroid {",
+        '}\n\nval violetBuildNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 3\n\nandroid {',
+        1,
+    )
+gradle_text = re.sub(r"versionCode\s*=\s*\d+", "versionCode = 10000 + violetBuildNumber", gradle_text, count=1)
+gradle_text = re.sub(r'versionName\s*=\s*"[^"]+"', 'versionName = "2.1.$violetBuildNumber"', gradle_text, count=1)
+if "versionCode = 10000 + violetBuildNumber" not in gradle_text or 'versionName = "2.1.$violetBuildNumber"' not in gradle_text:
+    raise RuntimeError("Could not set a unique Android versionCode/versionName")
+gradle_path.write_text(gradle_text, encoding="utf-8")
+print(f"Android package version set to 2.1.{__import__('os').environ.get('GITHUB_RUN_NUMBER', '3')} (versionCode 10000 + workflow run number).")
+
+# Temporary source inspection: print the real WebView bridge so the updater can
+# be attached to the existing activity without guessing its structure.
+for candidate in sorted(Path("android-native/src/main").rglob("*.kt")):
+    candidate_text = candidate.read_text(encoding="utf-8", errors="replace")
+    if "VioletAndroidBridge" in candidate_text or "addJavascriptInterface" in candidate_text:
+        print(f"=== ANDROID BRIDGE CANDIDATE: {candidate} ===")
+        lines = candidate_text.splitlines()
+        for line_number, line in enumerate(lines, start=1):
+            if "VioletAndroidBridge" in line or "addJavascriptInterface" in line:
+                low = max(1, line_number - 12)
+                high = min(len(lines), line_number + 38)
+                print(f"--- lines {low}-{high} ---")
+                for idx in range(low, high + 1):
+                    print(f"{idx}: {lines[idx - 1]}")
