@@ -31,7 +31,8 @@ test('imports Xray JSON with VLESS REALITY and XHTTP while preserving original c
   const result = parseAnyVpnConfigs(raw, 'Reality XHTTP test');
   assert.equal(result.error, undefined);
   assert.equal(result.profiles?.length, 1);
-  const profile = result.profiles![0];
+  const profile = result.profiles?.[0];
+  assert.ok(profile);
   assert.equal(profile.protocol, 'vless');
   assert.equal(profile.peerConfig.endpoint, 'edge.example.net:443');
   assert.equal(profile.vlessConfig?.security, 'reality');
