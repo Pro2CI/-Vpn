@@ -549,10 +549,10 @@ auto_search_source = auto_search_source.replace("hysteria2|hy2|", "")
 # Android WebView has no local API server and cross-origin requests fail CORS.
 native_import_marker = """  try {
     const resp = await fetch('/api/vpn/import-subscription', {"""
-native_import_replacement = """  const nativeFetch = typeof window !== 'undefined' ? window.VioletAndroidBridge?.fetchSubscription : undefined;
-  if (typeof nativeFetch === 'function') {
+native_import_replacement = """  const nativeBridge = typeof window !== 'undefined' ? window.VioletAndroidBridge : undefined;
+  if (typeof nativeBridge?.fetchSubscription === 'function') {
     try {
-      const result = JSON.parse(nativeFetch(cleanUrl)) as { ok?: boolean; text?: string; error?: string };
+      const result = JSON.parse(nativeBridge.fetchSubscription(cleanUrl)) as { ok?: boolean; text?: string; error?: string };
       if (!result.ok || typeof result.text !== 'string') {
         return { ok: false, error: result.error || 'Android не смог загрузить подписку.', configs: [] };
       }
@@ -1186,10 +1186,10 @@ if "const resilienceScore =" not in auto_source:
 # Native TCP connect latency is useful for initial node screening; it is not an ICMP ping.
 if "window.VioletAndroidBridge?.testEndpoint" not in auto_source:
     pattern = r"(?m)^  return \{\n    reachable: false,\n    latencyMs: null,\n    host,\n    port,\n    protocol,\n    checkedAt: new Date\(\)\.toISOString\(\),\n    viaBrowserFallback: true,"
-    replacement = """  const nativeTest = typeof window !== 'undefined' ? window.VioletAndroidBridge?.testEndpoint : undefined;
-  if (nativeTest) {
+    replacement = """  const nativeBridge = typeof window !== 'undefined' ? window.VioletAndroidBridge : undefined;
+  if (typeof nativeBridge?.testEndpoint === 'function') {
     try {
-      const nativeResult = JSON.parse(nativeTest(cleanEp)) as { reachable?: boolean; latencyMs?: number | null; host?: string; port?: number; detail?: string };
+      const nativeResult = JSON.parse(nativeBridge.testEndpoint(cleanEp)) as { reachable?: boolean; latencyMs?: number | null; host?: string; port?: number; detail?: string };
       return {
         reachable: Boolean(nativeResult.reachable),
         latencyMs: nativeResult.latencyMs ?? null,
@@ -1346,9 +1346,9 @@ if "nativeProbeRaw" not in probe_source:
     probe_source = probe_source.replace(
         "    try {\n      const response = await fetcher(endpoint + '&probe=' + Date.now(), {",
         """    try {
-      const nativeFetch = typeof window !== 'undefined' ? window.VioletAndroidBridge?.fetchSubscription : undefined;
-      if (nativeFetch) {
-        const nativeProbeRaw = nativeFetch(endpoint + '&probe=' + Date.now());
+      const nativeBridge = typeof window !== 'undefined' ? window.VioletAndroidBridge : undefined;
+      if (typeof nativeBridge?.fetchSubscription === 'function') {
+        const nativeProbeRaw = nativeBridge.fetchSubscription(endpoint + '&probe=' + Date.now());
         const nativeProbe = JSON.parse(nativeProbeRaw) as { ok?: boolean; text?: string; error?: string };
         if (!nativeProbe.ok || typeof nativeProbe.text !== 'string') {
           lastError = nativeProbe.error || 'нативный HTTPS-контроль не прошёл';
