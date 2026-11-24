@@ -3,6 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val violetBuildNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 3
+
 android {
     namespace = "com.violetvpn.android"
     compileSdk = 35
@@ -10,8 +12,8 @@ android {
         applicationId = "com.violetvpn.android"
         minSdk = 24
         targetSdk = 35
-        versionCode = 2
-        versionName = "2.0.0"
+        versionCode = 10000 + violetBuildNumber
+        versionName = "2.1.$violetBuildNumber"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
