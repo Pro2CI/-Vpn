@@ -97,7 +97,6 @@ export function connectNativeAnyProtocol(protocol: ProfileProtocol, configText: 
   const bridge = window.VioletAndroidBridge;
   if (!isNativeAndroidBridgeAvailable() || !bridge) return false;
   if (!CONNECTABLE_NATIVE_PROTOCOLS.has(protocol)) return false;
-  if (typeof bridge.hasNativeCore === 'function' && !bridge.hasNativeCore(protocol)) return false;
 
   const packagesJson = JSON.stringify(packageNames);
   if (typeof bridge.connectAny === 'function') {
@@ -418,3 +417,55 @@ package_data.setdefault("scripts", {})["test"] = "tsx --test scripts/tests/*.tes
 package_path.write_text(json.dumps(package_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 print("Added an isolated tunnel data-plane probe module and four Node test cases.")
+
+
+# Do not import Hysteria2 share links into this Xray-only path. Hysteria2/TUIC
+# remain unavailable until a sing-box engine is added to the Android package.
+auto_search_path = Path("src/services/autoSearchClient.ts")
+auto_search_source = auto_search_path.read_text(encoding="utf-8")
+auto_search_source = auto_search_source.replace("hysteria2|hy2|", "")
+auto_search_path.write_text(auto_search_source, encoding="utf-8")
+
+# Resolve nullable latency values at JSX boundaries; child props are optional
+# numbers rather than explicit nullable numbers.
+app_path = Path("src/App.tsx")
+app_source = app_path.read_text(encoding="utf-8")
+def normalize_latency_prop(match):
+    expression = match.group(2).rstrip()
+    if "??" not in expression:
+        expression += " ?? undefined"
+    return match.group(1) + expression + match.group(3)
+
+app_source, latency_props_patched = re.subn(
+    r"(\w+\s*=\s*\{)([^{}\n]*\blatencyMs\b[^{}\n]*)(\})",
+    normalize_latency_prop,
+    app_source,
+)
+app_path.write_text(app_source, encoding="utf-8")
+
+# Keep a soft animated halo on primary violet actions; the reduced-motion rule
+# already installed above disables it for users who request less motion.
+css_path = Path("src/index.css")
+css = css_path.read_text(encoding="utf-8")
+if "violet-button-breathe" not in css:
+    css += r"""
+#root button[class*="bg-violet-"]:not(:disabled),
+#root button[class*="bg-purple-"]:not(:disabled),
+#root button[class*="from-violet-"]:not(:disabled),
+#root button[class*="from-purple-"]:not(:disabled) {
+  animation: violet-button-breathe 3s ease-in-out infinite;
+}
+@keyframes violet-button-breathe {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.08); }
+}
+"""
+    css_path.write_text(css, encoding="utf-8")
+
+native_check = native.read_text(encoding="utf-8")
+if 'protocol.lowercase() in setOf("vless", "vmess", "trojan", "shadowsocks", "ss")' not in native_check:
+    raise RuntimeError("Native Xray protocol dispatch patch did not apply")
+if "connectXrayShareLink" not in native_check:
+    raise RuntimeError("Xray share-link converter rename did not apply")
+
+print("Filtered unsupported Hysteria2 links, normalized nullable latency props, and verified native Xray dispatch.")
