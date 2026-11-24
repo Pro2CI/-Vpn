@@ -30,6 +30,18 @@ jobs:
           test -f /tmp/violet-source/violet-work/package.json
           test -f /tmp/violet-source/violet-work/android-native/src/main/AndroidManifest.xml
           rsync -a --delete --exclude='.git/' /tmp/violet-source/violet-work/ ./
+      - name: Upload extracted source for remote review
+        uses: actions/upload-artifact@v4
+        with:
+          name: Violet-VPN-Extracted-Source
+          path: |
+            .
+            !.git/**
+            !node_modules/**
+            !dist/**
+            !android-native/.gradle/**
+          if-no-files-found: error
+          retention-days: 7
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
