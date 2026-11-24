@@ -1,1 +1,0 @@
-Android module is included as :app through settings.gradle.kts and lives in android-native/.

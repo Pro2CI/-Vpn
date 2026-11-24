@@ -1,6 +1,0 @@
-{
-  "name": "Vektor VPN — Бесплатный WireGuard VPN для Android",
-  "description": "Современный бесплатный VPN-клиент для Android с поддержкой протокола WireGuard, управлением .conf профилями, раздельным туннелированием и быстрыми серверами.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
