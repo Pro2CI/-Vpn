@@ -49,6 +49,8 @@ source = source.replace(
 )
 source = source.replace("JSON.parse(atob(match[2].split('#')[0].trim()))", "JSON.parse(decodeBase64Utf8(match[2].split('#')[0].trim()))")
 source = source.replace("configText: line,", "configText: candidate,")
+source = source.replace("const u = new URL(line.replace(", "const u = new URL(candidate.replace(")
+source = source.replace("function parseSubscriptionLines(", "export function parseSubscriptionLines(")
 source = source.replace(
     "const text = await resp.text();\n          const parsed",
     "const text = await resp.text();\n          if (text.length > 5_000_000) throw new Error('Feed exceeds 5 MB limit');\n          const parsed"
@@ -212,6 +214,23 @@ subscribe_impl = """async function verifyVpnDataPlane(): Promise<void> {
 
 let vpnProbeGeneration = 0;
 
+export function waitForNativeVpnConnection(timeoutMs = 25000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const target = window as Window & { onVioletVpnVerifiedState?: (state: 'connected' | 'disconnected', errorMessage?: string) => void };
+    const previous = target.onVioletVpnVerifiedState;
+    let settled = false;
+    const finish = (connected: boolean) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      target.onVioletVpnVerifiedState = previous;
+      resolve(connected);
+    };
+    const timer = window.setTimeout(() => finish(false), timeoutMs);
+    target.onVioletVpnVerifiedState = (state) => finish(state === 'connected');
+  });
+}
+
 export function subscribeNativeVpnEvents(onStateChange: (status: ConnectionStatus, error?: string) => void) {
   if (typeof window === 'undefined') return () => {};
   vpnProbeGeneration += 1;
@@ -220,7 +239,7 @@ export function subscribeNativeVpnEvents(onStateChange: (status: ConnectionStatu
       const generation = ++vpnProbeGeneration;
       onStateChange('connecting', 'Проверяем реальную передачу данных через VPN…');
       void verifyVpnDataPlane().then(() => {
-        if (generation === vpnProbeGeneration) onStateChange('connected');
+        if (generation === vpnProbeGeneration) { onStateChange('connected'); (window as Window & { onVioletVpnVerifiedState?: (state: 'connected' | 'disconnected', errorMessage?: string) => void }).onVioletVpnVerifiedState?.('connected'); }
       }).catch((reason: unknown) => {
         if (generation !== vpnProbeGeneration) return;
         vpnProbeGeneration += 1;
@@ -231,6 +250,7 @@ export function subscribeNativeVpnEvents(onStateChange: (status: ConnectionStatu
         }
         const message = reason instanceof Error ? reason.message : String(reason);
         onStateChange('disconnected', message);
+        (window as Window & { onVioletVpnVerifiedState?: (state: 'connected' | 'disconnected', errorMessage?: string) => void }).onVioletVpnVerifiedState?.('disconnected', message);
       });
       return;
     }
@@ -240,6 +260,7 @@ export function subscribeNativeVpnEvents(onStateChange: (status: ConnectionStatu
     }
     if (['connecting', 'disconnected', 'disconnecting'].includes(state)) {
       onStateChange(state as ConnectionStatus, error || undefined);
+      if (state === 'disconnected') (window as Window & { onVioletVpnVerifiedState?: (state: 'connected' | 'disconnected', errorMessage?: string) => void }).onVioletVpnVerifiedState?.('disconnected', error || undefined);
     }
   };
   return () => {
@@ -250,6 +271,23 @@ export function subscribeNativeVpnEvents(onStateChange: (status: ConnectionStatu
 """
 bridge = bridge[:subscribe_start] + subscribe_impl
 bridge_path.write_text(bridge, encoding="utf-8")
+
+# Wait for the native tunnel and the HTTPS data-plane check before reporting success.
+app_path = Path("src/App.tsx")
+app_source = app_path.read_text(encoding="utf-8")
+app_source = app_source.replace(
+    "  subscribeNativeVpnEvents,",
+    "  subscribeNativeVpnEvents,\\n  waitForNativeVpnConnection,"
+)
+app_source = app_source.replace(
+    "        if (launched) {\\n          return true;\\n        }",
+    "        if (launched) {\\n          return await waitForNativeVpnConnection(25000);\\n        }"
+)
+app_source = app_source.replace(
+    "void handleRunAutoConnect('all', false);",
+    "void handleRunAutoConnect('all', true);"
+)
+app_path.write_text(app_source, encoding="utf-8")
 
 # Apply a consistent glass/ambient visual treatment to the real React screen
 # after the original source archive has been extracted.
