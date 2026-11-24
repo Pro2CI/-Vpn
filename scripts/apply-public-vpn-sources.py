@@ -73,6 +73,60 @@ kotlin = kotlin.replace('В VLESS-ссылке не найден outbound', 'В 
 kotlin = kotlin.replace('VLESS-ссылка не содержит допустимый outbound', 'Ссылка не содержит допустимый outbound')
 kotlin = kotlin.replace('VLESS подключён через Xray-core', 'Xray подключён через Xray-core')
 kotlin = kotlin.replace('Не удалось запустить VLESS:', 'Не удалось запустить Xray:')
+
+# Route Violet's own HTTPS verification request through the VPN instead of bypassing it.
+kotlin = kotlin.replace(
+    '''                if (splitMode == "exclude") {
+                    ifaceBuilder.excludeApplication(packageName)
+                    packages.forEach { pkg -> ifaceBuilder.excludeApplication(pkg) }
+                } else if (splitMode == "include" && packages.isNotEmpty()) {
+                    packages.forEach { pkg -> ifaceBuilder.includeApplication(pkg) }
+                } else {
+                    ifaceBuilder.excludeApplication(packageName)
+                }''',
+    '''                if (splitMode == "exclude") {
+                    packages.forEach { pkg -> ifaceBuilder.excludeApplication(pkg) }
+                } else if (splitMode == "include" && packages.isNotEmpty()) {
+                    (packages + packageName).distinct().forEach { pkg -> ifaceBuilder.includeApplication(pkg) }
+                }'''
+)
+kotlin = kotlin.replace(
+    '''            builder.addDisallowedApplication(packageName)
+            tun = builder.establish()''',
+    '''            if (splitMode == "exclude") {
+                packages.forEach { pkg -> builder.addDisallowedApplication(pkg) }
+            } else if (splitMode == "include" && packages.isNotEmpty()) {
+                (packages + packageName).distinct().forEach { pkg -> builder.addAllowedApplication(pkg) }
+            }
+            tun = builder.establish()'''
+)
+kotlin = kotlin.replace(
+    "connectWithOptionalLibbox(protocol, rawConfig)",
+    "connectWithOptionalLibbox(protocol, rawConfig, splitMode, packages)"
+)
+kotlin = kotlin.replace(
+    "private fun connectWithOptionalLibbox(protocol: String, rawConfig: String)",
+    "private fun connectWithOptionalLibbox(protocol: String, rawConfig: String, splitMode: String, packages: ArrayList<String>)"
+)
+kotlin = kotlin.replace(
+    "connectXrayShareLink(rawConfig)",
+    "connectXrayShareLink(rawConfig, splitMode, packages)"
+)
+kotlin = kotlin.replace(
+    "private fun connectXrayShareLink(shareLink: String)",
+    "private fun connectXrayShareLink(shareLink: String, splitMode: String, packages: ArrayList<String>)"
+)
+kotlin = kotlin.replace(
+    '''            builder.addDisallowedApplication(packageName)
+            tun = builder.establish()''',
+    '''            if (splitMode == "exclude") {
+                packages.forEach { pkg -> builder.addDisallowedApplication(pkg) }
+            } else if (splitMode == "include" && packages.isNotEmpty()) {
+                (packages + packageName).distinct().forEach { pkg -> builder.addAllowedApplication(pkg) }
+            }
+            tun = builder.establish()'''
+)
+
 native.write_text(kotlin, encoding="utf-8")
 
 print("Patched public feeds, Base64/URI parsing, response limits, and Xray share-link dispatch (VLESS/VMess/Trojan/SS).")
