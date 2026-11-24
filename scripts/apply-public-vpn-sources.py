@@ -88,7 +88,8 @@ kotlin = kotlin.replace(
                 }''',
     '''                if (splitMode == "exclude") {
                     packages.forEach { pkg -> ifaceBuilder.excludeApplication(pkg) }
-                } else if (splitMode == "include" && packages.isNotEmpty()) {
+                } else if (splitMode == "include") {
+                    // With no selected apps, only Violet's own probe stays in the VPN.
                     (packages + packageName).distinct().forEach { pkg -> ifaceBuilder.includeApplication(pkg) }
                 }'''
 )
@@ -97,7 +98,8 @@ kotlin = kotlin.replace(
             tun = builder.establish()''',
     '''            if (splitMode == "exclude") {
                 packages.forEach { pkg -> builder.addDisallowedApplication(pkg) }
-            } else if (splitMode == "include" && packages.isNotEmpty()) {
+            } else if (splitMode == "include") {
+                // With no selected apps, only Violet's own probe stays in the VPN.
                 (packages + packageName).distinct().forEach { pkg -> builder.addAllowedApplication(pkg) }
             }
             tun = builder.establish()'''
@@ -226,7 +228,10 @@ export function waitForNativeVpnConnection(timeoutMs = 25000): Promise<boolean> 
       target.onVioletVpnVerifiedState = previous;
       resolve(connected);
     };
-    const timer = window.setTimeout(() => finish(false), timeoutMs);
+    const timer = window.setTimeout(() => {
+      try { target.VioletAndroidBridge?.disconnect(); } catch { /* ignore timeout cleanup errors */ }
+      finish(false);
+    }, timeoutMs);
     target.onVioletVpnVerifiedState = (state) => finish(state === 'connected');
   });
 }
@@ -287,6 +292,7 @@ app_source = app_source.replace(
     "void handleRunAutoConnect('all', false);",
     "void handleRunAutoConnect('all', true);"
 )
+app_source = app_source.replace("pool.slice(0, 3)", "pool.slice(0, 4)")
 app_path.write_text(app_source, encoding="utf-8")
 
 # Apply a consistent glass/ambient visual treatment to the real React screen
@@ -632,6 +638,8 @@ if "connectWithOptionalLibbox(protocol, rawConfig, splitMode, packages)" not in 
     raise RuntimeError("Xray split-tunnel settings are not passed to the native engine")
 if "builder.addAllowedApplication(pkg)" not in native_check:
     raise RuntimeError("Xray include-app split-tunnel routing patch did not apply")
+if 'splitMode == "include" && packages.isNotEmpty()' in native_check:
+    raise RuntimeError("Include-only split tunneling still routes all apps when the selection is empty")
 
 print("Filtered unsupported Hysteria2 links, normalized nullable latency props, and verified native Xray dispatch.")
 
@@ -639,6 +647,11 @@ print("Filtered unsupported Hysteria2 links, normalized nullable latency props, 
 # Dynamic Android version: every CI build must upgrade over an older installation.
 gradle_path = Path("android-native/build.gradle.kts")
 gradle_text = gradle_path.read_text(encoding="utf-8")
+gradle_text = gradle_text.replace(
+    '    defaultConfig {\n        applicationId = "com.violetvpn.android"',
+    '    defaultConfig {\n        ndk {\n            abiFilters += setOf("arm64-v8a", "armeabi-v7a")\n        }\n        applicationId = "com.violetvpn.android"',
+    1,
+)
 if "val violetBuildNumber" not in gradle_text:
     gradle_text = gradle_text.replace(
         "}\n\nandroid {",
@@ -649,6 +662,8 @@ gradle_text = re.sub(r"versionCode\s*=\s*\d+", "versionCode = 10000 + violetBuil
 gradle_text = re.sub(r'versionName\s*=\s*"[^"]+"', 'versionName = "2.1.$violetBuildNumber"', gradle_text, count=1)
 if "versionCode = 10000 + violetBuildNumber" not in gradle_text or 'versionName = "2.1.$violetBuildNumber"' not in gradle_text:
     raise RuntimeError("Could not set a unique Android versionCode/versionName")
+if 'abiFilters += setOf("arm64-v8a", "armeabi-v7a")' not in gradle_text:
+    raise RuntimeError("Could not restrict Android APK packaging to phone ABIs")
 gradle_path.write_text(gradle_text, encoding="utf-8")
 print(f"Android package version set to 2.1.{__import__('os').environ.get('GITHUB_RUN_NUMBER', '3')} (versionCode 10000 + workflow run number).")
 
