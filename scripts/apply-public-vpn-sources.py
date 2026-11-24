@@ -312,9 +312,12 @@ import json
 probe_path = Path("src/services/vpnDataPlaneCheck.ts")
 probe_path.write_text("""function isIpAddress(value: unknown): value is string {
   if (typeof value !== 'string' || value.length > 64) return false;
-  if (/^(?:\\\\d{1,3}\\\\.){3}\\\\d{1,3}$/.test(value)) {
-    return value.split('.').every(part => Number(part) >= 0 && Number(part) <= 255);
-  }
+  const octets = value.split('.');
+  if (octets.length === 4 && octets.every(part => {
+    if (part.length < 1 || part.length > 3) return false;
+    const number = Number(part);
+    return Number.isInteger(number) && number >= 0 && number <= 255 && String(number) === part;
+  })) return true;
   return value.includes(':') && /^[0-9a-f:]+$/i.test(value);
 }
 
