@@ -825,3 +825,39 @@ if "android.permission.REQUEST_INSTALL_PACKAGES" not in manifest:
 manifest_path.write_text(manifest, encoding="utf-8")
 
 print("Installed VioletAppUpdater bridge, checked latest public GitHub Release, and added the Android APK installer flow.")
+
+
+# Stable release signing: Android only upgrades an installed app when the signer matches.
+gradle_text = gradle_path.read_text(encoding="utf-8")
+if "violetSigningAvailable" not in gradle_text:
+    gradle_text = gradle_text.replace(
+        'val violetBuildNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 3',
+        'val violetBuildNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 3\nval violetSigningAvailable = !System.getenv("VIOLET_KEYSTORE_PATH").isNullOrBlank()',
+        1,
+    )
+    gradle_text = gradle_text.replace(
+        '    compileSdk = 35\n',
+        '''    compileSdk = 35
+    signingConfigs {
+        if (violetSigningAvailable) {
+            create("violetRelease") {
+                storeFile = file(System.getenv("VIOLET_KEYSTORE_PATH")!!)
+                storePassword = System.getenv("VIOLET_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("VIOLET_KEY_ALIAS")
+                keyPassword = System.getenv("VIOLET_KEY_PASSWORD")
+                storeType = "PKCS12"
+            }
+        }
+    }
+    buildTypes {
+        getByName("debug") {
+            if (violetSigningAvailable) {
+                signingConfig = signingConfigs.getByName("violetRelease")
+            }
+        }
+    }
+''',
+        1,
+    )
+    gradle_path.write_text(gradle_text, encoding="utf-8")
+print("Configured stable Violet VPN signing when VIOLET_SIGNING_BUNDLE is supplied.")
