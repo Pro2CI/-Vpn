@@ -58,4 +58,21 @@ source = source.replace(
     "const text = await directResp.text();\n    if (text.length > 5_000_000) return { ok: false, error: 'Подписка превышает лимит 5 МБ.', configs: [] };\n    const parsed"
 )
 path.write_text(source, encoding="utf-8")
-print("Patched public feed catalog, Base64 decoder, URI extraction, and response size limits.")
+
+# Xray's share-link converter handles these four protocols. Keep Hysteria2/TUIC
+# out of this path: they require sing-box or another native engine.
+native = Path("android-native/src/main/java/com/violetvpn/android/VioletWireGuardService.kt")
+kotlin = native.read_text(encoding="utf-8")
+kotlin = kotlin.replace(
+    'if (protocol.equals("vless", ignoreCase = true)) {\n            connectVlessWithXray(rawConfig)',
+    'if (protocol.lowercase() in setOf("vless", "vmess", "trojan", "shadowsocks", "ss")) {\n            connectXrayShareLink(rawConfig)'
+)
+kotlin = kotlin.replace("private fun connectVlessWithXray(shareLink: String)", "private fun connectXrayShareLink(shareLink: String)")
+kotlin = kotlin.replace('Не удалось разобрать VLESS-ссылку', 'Не удалось разобрать ссылку Xray')
+kotlin = kotlin.replace('В VLESS-ссылке не найден outbound', 'В ссылке не найден outbound')
+kotlin = kotlin.replace('VLESS-ссылка не содержит допустимый outbound', 'Ссылка не содержит допустимый outbound')
+kotlin = kotlin.replace('VLESS подключён через Xray-core', 'Xray подключён через Xray-core')
+kotlin = kotlin.replace('Не удалось запустить VLESS:', 'Не удалось запустить Xray:')
+native.write_text(kotlin, encoding="utf-8")
+
+print("Patched public feeds, Base64/URI parsing, response limits, and Xray share-link dispatch (VLESS/VMess/Trojan/SS).")
