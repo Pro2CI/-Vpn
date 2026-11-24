@@ -60,6 +60,8 @@ jobs:
         run: |
           npm install --no-audit --no-fund --strict-peer-deps --package-lock=false
           npm ls vite esbuild
+          npm test
+          npm run lint
           npm run build
           mkdir -p android-native/src/main/assets
           cp -a dist/. android-native/src/main/assets/
