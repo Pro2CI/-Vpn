@@ -424,6 +424,46 @@ print("Added an isolated tunnel data-plane probe module and four Node test cases
 auto_search_path = Path("src/services/autoSearchClient.ts")
 auto_search_source = auto_search_path.read_text(encoding="utf-8")
 auto_search_source = auto_search_source.replace("hysteria2|hy2|", "")
+
+# Android WebView has no local API server and cross-origin requests fail CORS.
+native_import_marker = """  try {
+    const resp = await fetch('/api/vpn/import-subscription', {"""
+native_import_replacement = """  const nativeFetch = typeof window !== 'undefined' ? window.VioletAndroidBridge?.fetchSubscription : undefined;
+  if (typeof nativeFetch === 'function') {
+    try {
+      const result = JSON.parse(nativeFetch(cleanUrl)) as { ok?: boolean; text?: string; error?: string };
+      if (!result.ok || typeof result.text !== 'string') {
+        return { ok: false, error: result.error || 'Android не смог загрузить подписку.', configs: [] };
+      }
+      if (result.text.length > 5000000) {
+        return { ok: false, error: 'Подписка превышает лимит 5 МБ.', configs: [] };
+      }
+      const parsed = parseSubscriptionLines(result.text, 'Подписка ' + new URL(cleanUrl).hostname, 'all');
+      return {
+        ok: parsed.length > 0,
+        error: parsed.length === 0 ? 'Ссылка открылась, но формат подписки не содержит поддерживаемых конфигураций.' : undefined,
+        configs: parsed,
+      };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'Ошибка Android при загрузке подписки.', configs: [] };
+    }
+  }
+
+  try {
+    const resp = await fetch('/api/vpn/import-subscription', {"""
+if native_import_marker not in auto_search_source:
+    pass
+auto_search_source = auto_search_source.replace(native_import_marker, native_import_replacement, 1)
+auto_search_path.write_text(auto_search_source, encoding="utf-8")
+
+android_bridge_path = Path("src/services/androidVpnBridge.ts")
+android_bridge_source = android_bridge_path.read_text(encoding="utf-8")
+if "fetchSubscription?:" not in android_bridge_source:
+    android_bridge_source = android_bridge_source.replace(
+        "  getState: () => string;",
+        "  getState: () => string;\\n  fetchSubscription?: (url: string) => string;"
+    )
+android_bridge_path.write_text(android_bridge_source, encoding="utf-8")
 auto_search_path.write_text(auto_search_source, encoding="utf-8")
 
 # Resolve nullable latency values at JSX boundaries; child props are optional
