@@ -505,3 +505,323 @@ for candidate in sorted(Path("android-native/src/main").rglob("*.kt")):
                 print(f"--- lines {low}-{high} ---")
                 for idx in range(low, high + 1):
                     print(f"{idx}: {lines[idx - 1]}")
+
+
+# Violet VPN in-app updater: query latest GitHub Release and hand APK to Android Package Installer.
+from textwrap import dedent
+
+android_root = Path("android-native/src/main")
+package_dir = android_root / "java/com/violetvpn/android"
+package_dir.mkdir(parents=True, exist_ok=True)
+
+updater_source = r'''package com.violetvpn.android
+
+import android.app.Activity
+import android.app.DownloadManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
+import android.webkit.JavascriptInterface
+import android.widget.Toast
+
+/**
+ * Small bridge used only for checking the installed version and handing an APK
+ * downloaded from the official Violet VPN GitHub Release to Android's installer.
+ */
+class VioletAppUpdater(private val activity: Activity) {
+    @Volatile private var activeDownloadId: Long? = null
+    @Volatile private var downloadReceiver: BroadcastReceiver? = null
+
+    @JavascriptInterface
+    fun getInstalledVersionCode(): Int {
+        val info = activity.packageManager.getPackageInfo(activity.packageName, 0)
+        return if (Build.VERSION.SDK_INT >= 28) info.longVersionCode.toInt() else info.versionCode
+    }
+
+    @JavascriptInterface
+    fun getInstalledVersionName(): String {
+        return activity.packageManager.getPackageInfo(activity.packageName, 0).versionName ?: "unknown"
+    }
+
+    @JavascriptInterface
+    fun installUpdate(downloadUrl: String, targetVersionCode: Int) {
+        activity.runOnUiThread {
+            try {
+                val installed = getInstalledVersionCode()
+                if (targetVersionCode <= installed) {
+                    toast("Установлена актуальная версия")
+                    return@runOnUiThread
+                }
+
+                val uri = Uri.parse(downloadUrl)
+                val validUrl = uri.scheme == "https" &&
+                    uri.host == "github.com" &&
+                    uri.path.orEmpty().startsWith("/Pro2CI/-Vpn/releases/download/") &&
+                    uri.path.orEmpty().endsWith(".apk")
+                if (!validUrl) {
+                    toast("Отклонена неизвестная ссылка обновления")
+                    return@runOnUiThread
+                }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                    !activity.packageManager.canRequestPackageInstalls()
+                ) {
+                    toast("Разрешите установку приложений из Violet VPN, затем нажмите «Обновить» ещё раз")
+                    val settingsIntent = Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:${activity.packageName}")
+                    )
+                    activity.startActivity(settingsIntent)
+                    return@runOnUiThread
+                }
+
+                startApkDownload(downloadUrl)
+            } catch (error: Exception) {
+                toast("Не удалось начать обновление: ${error.message ?: "ошибка"}")
+            }
+        }
+    }
+
+    private fun startApkDownload(downloadUrl: String) {
+        val context = activity.applicationContext
+        val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+
+        downloadReceiver?.let {
+            try { context.unregisterReceiver(it) } catch (_: Exception) { }
+        }
+        activeDownloadId = null
+
+        val request = DownloadManager.Request(Uri.parse(downloadUrl))
+            .setTitle("Violet VPN — обновление")
+            .setDescription("Загрузка новой версии приложения")
+            .setMimeType(APK_MIME)
+            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            .setDestinationInExternalFilesDir(
+                context,
+                Environment.DIRECTORY_DOWNLOADS,
+                "Violet-VPN-update.apk"
+            )
+
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(receiverContext: Context?, intent: Intent?) {
+                if (intent?.action != DownloadManager.ACTION_DOWNLOAD_COMPLETE) return
+                val completedId = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+                val expectedId = activeDownloadId ?: return
+                if (completedId != expectedId) return
+
+                activeDownloadId = null
+                downloadReceiver = null
+                try { context.unregisterReceiver(this) } catch (_: Exception) { }
+
+                val query = DownloadManager.Query().setFilterById(completedId)
+                manager.query(query)?.use { cursor ->
+                    if (!cursor.moveToFirst()) {
+                        toast("Не удалось проверить загруженный APK")
+                        return
+                    }
+                    val statusColumn = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                    val status = if (statusColumn >= 0) cursor.getInt(statusColumn) else -1
+                    if (status != DownloadManager.STATUS_SUCCESSFUL) {
+                        val reasonColumn = cursor.getColumnIndex(DownloadManager.COLUMN_REASON)
+                        val reason = if (reasonColumn >= 0) cursor.getInt(reasonColumn) else status
+                        toast("Загрузка обновления не завершилась (код $reason)")
+                        return
+                    }
+                }
+
+                val apkUri = manager.getUriForDownloadedFile(completedId)
+                if (apkUri == null) {
+                    toast("APK загружен, но Android не вернул ссылку на файл")
+                    return
+                }
+                val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(apkUri, APK_MIME)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                try {
+                    context.startActivity(installIntent)
+                } catch (_: Exception) {
+                    toast("Не удалось открыть системный установщик Android")
+                }
+            }
+        }
+
+        val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+        if (Build.VERSION.SDK_INT >= 33) {
+            context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            context.registerReceiver(receiver, filter)
+        }
+        downloadReceiver = receiver
+        activeDownloadId = manager.enqueue(request)
+        toast("Обновление загружается. Уведомление покажет завершение загрузки.")
+    }
+
+    private fun toast(message: String) {
+        activity.runOnUiThread {
+            Toast.makeText(activity, message, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    companion object {
+        private const val APK_MIME = "application/vnd.android.package-archive"
+
+        /**
+         * Small, self-contained version notice. It is injected after the local
+         * WebView page loads, so it is independent of the React render tree.
+         */
+        const val UPDATE_SCRIPT = """
+            (function () {
+              if (window.__violetUpdaterInstalled) return;
+              window.__violetUpdaterInstalled = true;
+
+              var css = document.createElement('style');
+              css.textContent = ''
+                + '#violet-app-update{position:fixed;z-index:2147483000;left:14px;right:14px;bottom:14px;'
+                + 'padding:13px 14px;border:1px solid rgba(178,155,255,.34);border-radius:18px;'
+                + 'background:rgba(20,17,34,.96);color:#f6f1ff;box-shadow:0 12px 36px rgba(0,0,0,.42);'
+                + 'font:14px system-ui,-apple-system,sans-serif;display:flex;align-items:center;gap:12px;'
+                + 'backdrop-filter:blur(18px);}'
+                + '#violet-app-update .vau-copy{flex:1;min-width:0;}'
+                + '#violet-app-update .vau-title{font-weight:700;font-size:14px;}'
+                + '#violet-app-update .vau-sub{opacity:.74;font-size:12px;margin-top:3px;}'
+                + '#violet-app-update button{border:0;border-radius:12px;padding:10px 13px;'
+                + 'background:#8b70ff;color:white;font-weight:700;font-size:13px;}'
+                + '#violet-app-update button:disabled{opacity:.6;}'
+                + '#violet-app-update .vau-close{background:transparent;padding:5px 7px;color:#c7bddf;}'
+                + '@media(prefers-reduced-motion:no-preference){#violet-app-update{animation:vau-in .25s ease-out}}'
+                + '@keyframes vau-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}';
+              document.head.appendChild(css);
+
+              function show(title, subtitle, actionLabel, action, dismissible) {
+                var old = document.getElementById('violet-app-update');
+                if (old) old.remove();
+                var box = document.createElement('div');
+                box.id = 'violet-app-update';
+                var copy = document.createElement('div');
+                copy.className = 'vau-copy';
+                var heading = document.createElement('div');
+                heading.className = 'vau-title';
+                heading.textContent = title;
+                var detail = document.createElement('div');
+                detail.className = 'vau-sub';
+                detail.textContent = subtitle;
+                copy.appendChild(heading);
+                copy.appendChild(detail);
+                box.appendChild(copy);
+                var button = document.createElement('button');
+                button.textContent = actionLabel;
+                button.addEventListener('click', action);
+                box.appendChild(button);
+                if (dismissible) {
+                  var close = document.createElement('button');
+                  close.className = 'vau-close';
+                  close.textContent = '×';
+                  close.setAttribute('aria-label', 'Скрыть сообщение об обновлении');
+                  close.addEventListener('click', function () { box.remove(); });
+                  box.appendChild(close);
+                }
+                document.body.appendChild(box);
+              }
+
+              async function checkUpdates(manual) {
+                try {
+                  if (!window.VioletAppUpdater) throw new Error('Native updater is unavailable');
+                  var installedCode = Number(window.VioletAppUpdater.getInstalledVersionCode());
+                  var installedName = String(window.VioletAppUpdater.getInstalledVersionName());
+                  var response = await fetch(
+                    'https://api.github.com/repos/Pro2CI/-Vpn/releases/latest',
+                    { headers: { 'Accept': 'application/vnd.github+json' }, cache: 'no-store' }
+                  );
+                  if (!response.ok) throw new Error('GitHub API HTTP ' + response.status);
+                  var release = await response.json();
+                  var tag = String(release.tag_name || '');
+                  var match = tag.match(/^violet-build-(\d+)$/);
+                  if (!match) throw new Error('В релизе не найден номер сборки');
+                  var buildNumber = Number(match[1]);
+                  var targetCode = 10000 + buildNumber;
+                  var versionName = '2.1.' + buildNumber;
+                  var apk = (release.assets || []).find(function (asset) {
+                    return asset.name === 'Violet-VPN-latest.apk';
+                  });
+                  if (!apk || !apk.browser_download_url) throw new Error('В релизе нет APK');
+
+                  if (targetCode > installedCode) {
+                    show(
+                      'Доступно обновление Violet VPN',
+                      'Установлена ' + installedName + ' · новая версия ' + versionName,
+                      'Обновить',
+                      function () {
+                        var button = document.querySelector('#violet-app-update button');
+                        if (button) { button.disabled = true; button.textContent = 'Загрузка…'; }
+                        window.VioletAppUpdater.installUpdate(apk.browser_download_url, targetCode);
+                      },
+                      true
+                    );
+                  } else if (manual) {
+                    show('Обновления не найдены', 'Установлена последняя версия ' + installedName, 'Понятно', function () {
+                      var box = document.getElementById('violet-app-update');
+                      if (box) box.remove();
+                    }, true);
+                  }
+                } catch (error) {
+                  if (manual) {
+                    show('Не удалось проверить обновления', String(error && error.message || error), 'Повторить', function () {
+                      checkUpdates(true);
+                    }, true);
+                  }
+                }
+              }
+
+              setTimeout(function () { checkUpdates(false); }, 1200);
+            })();
+        """
+    }
+}
+'''
+(package_dir / "VioletAppUpdater.kt").write_text(updater_source, encoding="utf-8")
+
+activity_path = package_dir / "MainActivity.kt"
+activity = activity_path.read_text(encoding="utf-8")
+
+bridge_marker = '            addJavascriptInterface(VioletJsBridge(), "VioletAndroidBridge")'
+bridge_addition = '            addJavascriptInterface(VioletAppUpdater(this@MainActivity), "VioletAppUpdater")\n' + bridge_marker
+if 'addJavascriptInterface(VioletAppUpdater(this@MainActivity), "VioletAppUpdater")' not in activity:
+    if bridge_marker not in activity:
+        raise RuntimeError("Updater: cannot find VioletAndroidBridge registration in MainActivity.kt")
+    activity = activity.replace(bridge_marker, bridge_addition, 1)
+
+intercept_marker = """                    return assetLoader.shouldInterceptRequest(request.url)
+                }
+            }"""
+intercept_replacement = """                    return assetLoader.shouldInterceptRequest(request.url)
+                }
+
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    view?.evaluateJavascript(VioletAppUpdater.UPDATE_SCRIPT, null)
+                }
+            }"""
+if "VioletAppUpdater.UPDATE_SCRIPT" not in activity:
+    if intercept_marker not in activity:
+        raise RuntimeError("Updater: cannot find WebViewClient request interception block in MainActivity.kt")
+    activity = activity.replace(intercept_marker, intercept_replacement, 1)
+activity_path.write_text(activity, encoding="utf-8")
+
+manifest_path = android_root / "AndroidManifest.xml"
+manifest = manifest_path.read_text(encoding="utf-8")
+if "android.permission.REQUEST_INSTALL_PACKAGES" not in manifest:
+    match = re.search(r"<manifest\b[^>]*>", manifest)
+    if not match:
+        raise RuntimeError("Updater: cannot locate manifest root element")
+    manifest = manifest[:match.end()] + '\n    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />' + manifest[match.end():]
+manifest_path.write_text(manifest, encoding="utf-8")
+
+print("Installed VioletAppUpdater bridge, checked latest public GitHub Release, and added the Android APK installer flow.")
