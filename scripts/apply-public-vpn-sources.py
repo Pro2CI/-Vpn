@@ -303,3 +303,118 @@ body::after {
     css_path.write_text(css, encoding="utf-8")
 
 print("Applied subscription-feed parsing, native-protocol allowlist, HTTPS data-plane confirmation, and Violet glass/ambient UI styling.")
+
+
+# Keep the tunnel probe in a small pure module so CI can exercise success,
+# fallback and failure paths independently of an Android device.
+import json
+
+probe_path = Path("src/services/vpnDataPlaneCheck.ts")
+probe_path.write_text("""function isIpAddress(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length > 64) return false;
+  if (/^(?:\\\\d{1,3}\\\\.){3}\\\\d{1,3}$/.test(value)) {
+    return value.split('.').every(part => Number(part) >= 0 && Number(part) <= 255);
+  }
+  return value.includes(':') && /^[0-9a-f:]+$/i.test(value);
+}
+
+export async function verifyVpnDataPlane(fetcher: typeof fetch = fetch): Promise<void> {
+  const endpoints = [
+    'https://api.ipify.org?format=json',
+    'https://api64.ipify.org?format=json',
+  ];
+  let lastError = 'нет ответа от контрольного сервера';
+
+  for (const endpoint of endpoints) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5500);
+    try {
+      const response = await fetcher(endpoint + '&probe=' + Date.now(), {
+        method: 'GET',
+        cache: 'no-store',
+        credentials: 'omit',
+        redirect: 'error',
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        lastError = 'HTTP ' + response.status;
+        continue;
+      }
+      const payload = await response.json() as { ip?: unknown };
+      if (isIpAddress(payload.ip)) return;
+      lastError = 'контрольный сервер вернул некорректный IP';
+    } catch (error) {
+      lastError = error instanceof Error && error.name === 'AbortError'
+        ? 'тайм-аут проверки трафика'
+        : (error instanceof Error ? error.message : String(error));
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  throw new Error('Реальный трафик через VPN не подтверждён: ' + lastError);
+}
+""", encoding="utf-8")
+
+import_marker = "import {ConnectionStatus, ProfileProtocol, SplitTunnelMode} from '../types/vpn';"
+if import_marker not in bridge:
+    raise RuntimeError("Cannot safely add data-plane helper import to androidVpnBridge.ts")
+if "from './vpnDataPlaneCheck'" not in bridge:
+    bridge = bridge.replace(import_marker, import_marker + "\nimport { verifyVpnDataPlane } from './vpnDataPlaneCheck';", 1)
+
+bridge, removed_probe = re.subn(
+    r"async function verifyVpnDataPlane\(\): Promise<void> \{[\\s\\S]*?\\n\}\n\n(?=let vpnProbeGeneration)",
+    "",
+    bridge,
+    count=1,
+)
+if removed_probe != 1:
+    raise RuntimeError("Could not extract inline VPN probe into the tested helper module")
+bridge_path.write_text(bridge, encoding="utf-8")
+
+tests_dir = Path("scripts/tests")
+tests_dir.mkdir(parents=True, exist_ok=True)
+tests_dir.joinpath("vpnDataPlaneCheck.test.mjs").write_text("""import test from 'node:test';
+import assert from 'node:assert/strict';
+import { verifyVpnDataPlane } from '../../src/services/vpnDataPlaneCheck.ts';
+
+const ipResponse = (ip, status = 200) => new Response(
+  JSON.stringify({ ip }),
+  { status, headers: { 'content-type': 'application/json' } },
+);
+
+test('accepts a successful HTTPS probe with a valid IPv4 address', async () => {
+  await assert.doesNotReject(() => verifyVpnDataPlane(async () => ipResponse('203.0.113.8')));
+});
+
+test('falls back to the second probe endpoint when the first fails', async () => {
+  let requests = 0;
+  await verifyVpnDataPlane(async () => {
+    requests += 1;
+    if (requests === 1) throw new Error('temporary endpoint failure');
+    return ipResponse('2001:db8::8');
+  });
+  assert.equal(requests, 2);
+});
+
+test('rejects the connection when neither endpoint confirms data traffic', async () => {
+  await assert.rejects(
+    () => verifyVpnDataPlane(async () => ipResponse('', 503)),
+    /Реальный трафик через VPN не подтверждён/,
+  );
+});
+
+test('rejects malformed IP responses', async () => {
+  await assert.rejects(
+    () => verifyVpnDataPlane(async () => ipResponse('not-an-ip')),
+    /некорректный IP/,
+  );
+});
+""", encoding="utf-8")
+
+package_path = Path("package.json")
+package_data = json.loads(package_path.read_text(encoding="utf-8"))
+package_data.setdefault("scripts", {})["test"] = "tsx --test scripts/tests/*.test.mjs"
+package_path.write_text(json.dumps(package_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+print("Added an isolated tunnel data-plane probe module and four Node test cases.")
