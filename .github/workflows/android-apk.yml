@@ -3,7 +3,7 @@ name: Build Violet VPN APK
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, violet-2.1.47-stable]
     paths:
       - 'Violet-VPN-source-corrected.zip'
       - '.github/workflows/android-apk.yml'
@@ -33,6 +33,8 @@ jobs:
           rsync -a --delete --exclude='.git/' --exclude='/scripts/***' --exclude='/.github/***' /tmp/violet-source/violet-work/ ./
       - name: Apply public VPN source integration
         run: python3 scripts/apply-public-vpn-sources.py
+      - name: Apply Xray JSON import support
+        run: python3 scripts/apply-xray-json-support.py
       - name: Upload extracted source for remote review
         uses: actions/upload-artifact@v7
         with:
