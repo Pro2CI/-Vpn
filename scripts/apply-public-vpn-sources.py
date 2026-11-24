@@ -1184,7 +1184,7 @@ if "const resilienceScore =" not in auto_source:
     )
 
 # Native TCP connect latency is useful for initial node screening; it is not an ICMP ping.
-if "window.VioletAndroidBridge?.testEndpoint" not in auto_source:
+if "nativeBridge?.testEndpoint" not in auto_source:
     pattern = r"(?m)^  return \{\n    reachable: false,\n    latencyMs: null,\n    host,\n    port,\n    protocol,\n    checkedAt: new Date\(\)\.toISOString\(\),\n    viaBrowserFallback: true,"
     replacement = """  const nativeBridge = typeof window !== 'undefined' ? window.VioletAndroidBridge : undefined;
   if (typeof nativeBridge?.testEndpoint === 'function') {
@@ -1496,7 +1496,7 @@ if "const resilienceScore =" not in auto_source:
     )
 
 # Use a native TCP connect check where browser CORS cannot measure a node.
-if "window.VioletAndroidBridge?.testEndpoint" not in auto_source:
+if "nativeBridge?.testEndpoint" not in auto_source:
     pattern = r"(?m)^  return \{\n    reachable: false,\n    latencyMs: null,\n    host,\n    port,\n    protocol,\n    checkedAt: new Date\(\)\.toISOString\(\),\n    viaBrowserFallback: true,"
     replacement = """  const nativeBridge = typeof window !== 'undefined' ? window.VioletAndroidBridge : undefined;
   if (typeof nativeBridge?.testEndpoint === 'function') {
