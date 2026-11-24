@@ -1415,7 +1415,7 @@ activity = activity.replace(
                 val manager = this@MainActivity.getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
                     as? android.net.ConnectivityManager
                 val network = manager?.activeNetwork
-                val capabilities = if (network != null) manager.getNetworkCapabilities(network) else null
+                val capabilities = if (network != null) manager?.getNetworkCapabilities(network) else null
                 if (capabilities?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true) {
                     return JSONObject().put("online", true).put("source", "Android network capability").toString()
                 }
