@@ -853,6 +853,90 @@ if "VioletAppUpdater.UPDATE_SCRIPT" not in activity:
     if intercept_marker not in activity:
         raise RuntimeError("Updater: cannot find WebViewClient request interception block in MainActivity.kt")
     activity = activity.replace(intercept_marker, intercept_replacement, 1)
+# Native HTTPS downloader for subscription imports: bypasses WebView CORS and validates redirects.
+if "fun fetchSubscription(rawUrl: String): String" not in activity:
+    import_marker = "import org.json.JSONObject"
+    activity = activity.replace(
+        import_marker,
+        import_marker + "\nimport java.io.ByteArrayOutputStream\nimport java.net.InetAddress\nimport java.net.URL\nimport javax.net.ssl.HttpsURLConnection",
+        1
+    )
+    disconnect_marker = """        @JavascriptInterface
+        fun disconnect() {"""
+    fetch_method = """        @JavascriptInterface
+        fun fetchSubscription(rawUrl: String): String {
+            fun failure(message: String): String =
+                JSONObject().put("ok", false).put("error", message).toString()
+            try {
+                var target = URL(rawUrl.trim())
+                for (redirect in 0..5) {
+                    if (!target.protocol.equals("https", ignoreCase = true) || target.host.isBlank()) {
+                        return failure("Разрешены только HTTPS-ссылки.")
+                    }
+                    val addresses = InetAddress.getAllByName(target.host)
+                    if (addresses.isEmpty() || addresses.any { address ->
+                        val bytes = address.address
+                        val privateIpv4 = if (bytes.size == 4) {
+                            val a = bytes[0].toInt() and 0xff
+                            val b = bytes[1].toInt() and 0xff
+                            a == 0 || a == 10 || a == 127 || a >= 224 ||
+                                (a == 169 && b == 254) || (a == 172 && b in 16..31) ||
+                                (a == 192 && b == 168) || (a == 100 && b in 64..127) ||
+                                (a == 198 && b in 18..19)
+                        } else false
+                        privateIpv4 || address.isAnyLocalAddress || address.isLoopbackAddress ||
+                            address.isLinkLocalAddress || address.isSiteLocalAddress || address.isMulticastAddress
+                    }) {
+                        return failure("Ссылка ведёт на непубличный или локальный адрес.")
+                    }
+                    val connection = (target.openConnection() as HttpsURLConnection).apply {
+                        instanceFollowRedirects = false
+                        connectTimeout = 10000
+                        readTimeout = 15000
+                        requestMethod = "GET"
+                        setRequestProperty("User-Agent", "VioletVPN-Android/2.0")
+                        setRequestProperty("Accept", "text/plain, application/octet-stream, */*")
+                        setRequestProperty("Accept-Encoding", "identity")
+                    }
+                    try {
+                        val code = connection.responseCode
+                        if (code in 300..399) {
+                            val location = connection.getHeaderField("Location")
+                                ?: return failure("Сервер перенаправил запрос без адреса назначения.")
+                            target = URL(target, location)
+                            continue
+                        }
+                        if (code !in 200..299) return failure("Сервер подписки ответил HTTP " + code + ".")
+                        val output = ByteArrayOutputStream()
+                        connection.inputStream.use { input ->
+                            val buffer = ByteArray(8192)
+                            var total = 0
+                            while (true) {
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                total += count
+                                if (total > 5 * 1024 * 1024) return failure("Подписка превышает лимит 5 МБ.")
+                                output.write(buffer, 0, count)
+                            }
+                        }
+                        val text = output.toString(Charsets.UTF_8.name())
+                        if (text.isBlank()) return failure("Сервер вернул пустую подписку.")
+                        return JSONObject().put("ok", true).put("text", text).toString()
+                    } finally {
+                        connection.disconnect()
+                    }
+                }
+                return failure("Слишком много перенаправлений при загрузке подписки.")
+            } catch (error: Exception) {
+                return failure(error.message ?: "Не удалось загрузить подписку по HTTPS.")
+            }
+        }
+
+        @JavascriptInterface
+        fun disconnect() {"""
+    if disconnect_marker not in activity:
+        raise RuntimeError("Subscription importer: disconnect bridge marker missing")
+    activity = activity.replace(disconnect_marker, fetch_method, 1)
 activity_path.write_text(activity, encoding="utf-8")
 
 manifest_path = android_root / "AndroidManifest.xml"
