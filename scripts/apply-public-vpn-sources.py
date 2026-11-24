@@ -1121,3 +1121,198 @@ if "violetSigningAvailable" not in gradle_text:
     )
     gradle_path.write_text(gradle_text, encoding="utf-8")
 print("Configured stable Violet VPN signing when VIOLET_SIGNING_BUNDLE is supplied.")
+
+
+# Build 48: make Android connectivity, subscription discovery and endpoint checks native.
+auto_path = Path("src/services/autoSearchClient.ts")
+auto_source = auto_path.read_text(encoding="utf-8")
+feed_fetch_old = "const resp = await fetch(job.url, { signal: controller.signal });"
+feed_fetch_new = """const nativeFeedRaw = typeof window !== 'undefined' ? window.VioletAndroidBridge?.fetchSubscription?.(job.url) : undefined;
+          let resp: Response;
+          if (nativeFeedRaw) {
+            const nativeFeed = JSON.parse(nativeFeedRaw) as { ok?: boolean; text?: string; error?: string };
+            if (!nativeFeed.ok || typeof nativeFeed.text !== 'string') throw new Error(nativeFeed.error || 'Ошибка HTTPS-подписки');
+            resp = new Response(nativeFeed.text, { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+          } else {
+            resp = await fetch(job.url, { signal: controller.signal });
+          }"""
+if "nativeFeedRaw" not in auto_source:
+    if feed_fetch_old not in auto_source:
+        raise RuntimeError("Build 48: auto-search fetch marker missing")
+    auto_source = auto_source.replace(feed_fetch_old, feed_fetch_new, 1)
+
+# Sort likely REALITY/Vision links first; real usability is still verified only after tunnel start.
+if "const resilienceScore =" not in auto_source:
+    auto_source = auto_source.replace(
+        "  return {\n    searchedAt: new Date().toISOString(),",
+        """  const resilienceScore = (item: AutoDiscoveredVpnConfig) => {
+    const raw = item.configText.toLowerCase();
+    return (raw.includes('reality') ? 100 : 0)
+      + (raw.includes('pbk=') || raw.includes('publickey') ? 40 : 0)
+      + (raw.includes('flow=xtls-rprx-vision') ? 30 : 0)
+      + (raw.includes('fp=chrome') ? 10 : 0)
+      + (item.endpoint.endsWith(':443') ? 5 : 0);
+  };
+  configs.sort((a, b) => resilienceScore(b) - resilienceScore(a));
+
+  return {
+    searchedAt: new Date().toISOString(),""",
+        1,
+    )
+
+# Use a native TCP connect check where browser CORS cannot measure a node.
+if "window.VioletAndroidBridge?.testEndpoint" not in auto_source:
+    pattern = r"(?m)^  return \{\n    reachable: false,\n    latencyMs: null,\n    host,\n    port,\n    protocol,\n    checkedAt: new Date\(\)\.toISOString\(\),\n    viaBrowserFallback: true,"
+    replacement = """  const nativeTest = typeof window !== 'undefined' ? window.VioletAndroidBridge?.testEndpoint : undefined;
+  if (nativeTest) {
+    try {
+      const nativeResult = JSON.parse(nativeTest(cleanEp)) as { reachable?: boolean; latencyMs?: number | null; host?: string; port?: number; detail?: string };
+      return {
+        reachable: Boolean(nativeResult.reachable),
+        latencyMs: nativeResult.latencyMs ?? null,
+        host: nativeResult.host || host,
+        port: nativeResult.port || port,
+        protocol,
+        checkedAt: new Date().toISOString(),
+        note: nativeResult.detail || 'Нативная TCP-проверка порта.',
+      };
+    } catch {
+      // Continue to browser fallback.
+    }
+  }
+
+  return {
+    reachable: false,
+    latencyMs: null,
+    host,
+    port,
+    protocol,
+    checkedAt: new Date().toISOString(),
+    viaBrowserFallback: true,"""
+    auto_source, n = re.subn(pattern, replacement, auto_source, count=1)
+    if n != 1:
+        raise RuntimeError("Build 48: endpoint fallback insertion failed")
+auto_path.write_text(auto_source, encoding="utf-8")
+
+bridge_path = Path("src/services/androidVpnBridge.ts")
+bridge_source = bridge_path.read_text(encoding="utf-8")
+bridge_source = bridge_source.replace(
+    "  fetchSubscription?: (url: string) => string;",
+    "  fetchSubscription?: (url: string) => string;\n  checkConnectivity?: () => string;\n  testEndpoint?: (endpoint: string) => string;"
+)
+if "checkConnectivity?:" not in bridge_source or "testEndpoint?:" not in bridge_source:
+    raise RuntimeError("Build 48: native bridge declarations missing")
+bridge_path.write_text(bridge_source, encoding="utf-8")
+
+activity_path = Path("android-native/src/main/java/com/violetvpn/android/MainActivity.kt")
+activity = activity_path.read_text(encoding="utf-8")
+if "fun checkConnectivity(): String" not in activity:
+    native_methods = """        @JavascriptInterface
+        fun checkConnectivity(): String {
+            val targets = listOf(
+                "https://connectivitycheck.gstatic.com/generate_204",
+                "https://www.cloudflare.com/cdn-cgi/trace",
+                "https://api.github.com/zen",
+                "https://www.microsoft.com/favicon.ico"
+            )
+            for (raw in targets) {
+                var connection: HttpsURLConnection? = null
+                try {
+                    connection = (URL(raw).openConnection() as HttpsURLConnection).apply {
+                        instanceFollowRedirects = true
+                        connectTimeout = 2000
+                        readTimeout = 2000
+                        requestMethod = "GET"
+                        setRequestProperty("User-Agent", "VioletVPN-Android/2.1")
+                    }
+                    val code = connection.responseCode
+                    if (code in 200..399) return JSONObject().put("online", true)
+                        .put("httpStatus", code).put("host", URL(raw).host).toString()
+                } catch (_: Exception) {
+                } finally {
+                    connection?.disconnect()
+                }
+            }
+            return JSONObject().put("online", false).toString()
+        }
+
+        @JavascriptInterface
+        fun testEndpoint(endpoint: String): String {
+            return try {
+                val clean = endpoint.trim()
+                val target = URL(if (clean.startsWith("https://", true)) clean else "https://" + clean)
+                val host = target.host
+                val port = if (target.port > 0) target.port else 443
+                val started = System.nanoTime()
+                java.net.Socket().use { socket ->
+                    socket.connect(java.net.InetSocketAddress(host, port), 5000)
+                }
+                val latency = ((System.nanoTime() - started) / 1000000L).coerceAtLeast(1L)
+                JSONObject().put("reachable", true).put("latencyMs", latency)
+                    .put("host", host).put("port", port)
+                    .put("detail", "TCP-проверка порта; протокольное подключение проверяется отдельно.").toString()
+            } catch (error: Exception) {
+                JSONObject().put("reachable", false).put("latencyMs", JSONObject.NULL)
+                    .put("detail", error.message ?: "TCP-соединение не установлено.").toString()
+            }
+        }
+
+"""
+    disconnect_marker = """        @JavascriptInterface
+        fun disconnect() {"""
+    if disconnect_marker not in activity:
+        raise RuntimeError("Build 48: MainActivity disconnect marker missing")
+    activity = activity.replace(disconnect_marker, native_methods + disconnect_marker, 1)
+activity_path.write_text(activity, encoding="utf-8")
+
+hook_path = Path("src/hooks/usePWAInstall.ts")
+hook_source = hook_path.read_text(encoding="utf-8")
+online_start = hook_source.find("export function useOnlineStatus()")
+if online_start < 0:
+    raise RuntimeError("Build 48: online status hook marker missing")
+if "checkConnectivity?:" not in hook_source:
+    hook_source = hook_source[:online_start] + """export function useOnlineStatus() {
+  const [isOnline, setIsOnline] = useState(
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+
+  useEffect(() => {
+    let active = true;
+    let timer: number | undefined;
+    const check = () => {
+      const native = (window as Window & {
+        VioletAndroidBridge?: { checkConnectivity?: () => string }
+      }).VioletAndroidBridge?.checkConnectivity;
+      if (native) {
+        try {
+          const result = JSON.parse(native()) as { online?: boolean };
+          if (active) setIsOnline(Boolean(result.online));
+          return;
+        } catch {
+          if (active) setIsOnline(false);
+          return;
+        }
+      }
+      if (active) setIsOnline(navigator.onLine);
+    };
+    const handleOnline = () => { void check(); };
+    const handleOffline = () => { void check(); };
+    void check();
+    timer = window.setInterval(check, 30000);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      active = false;
+      if (timer !== undefined) window.clearInterval(timer);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  return isOnline;
+}
+"""
+hook_path.write_text(hook_source, encoding="utf-8")
+
+print("Build 48: native HTTPS feed retrieval, active connectivity status, and native TCP latency checks installed.")
+
