@@ -1498,10 +1498,10 @@ if "const resilienceScore =" not in auto_source:
 # Use a native TCP connect check where browser CORS cannot measure a node.
 if "window.VioletAndroidBridge?.testEndpoint" not in auto_source:
     pattern = r"(?m)^  return \{\n    reachable: false,\n    latencyMs: null,\n    host,\n    port,\n    protocol,\n    checkedAt: new Date\(\)\.toISOString\(\),\n    viaBrowserFallback: true,"
-    replacement = """  const nativeTest = typeof window !== 'undefined' ? window.VioletAndroidBridge?.testEndpoint : undefined;
-  if (nativeTest) {
+    replacement = """  const nativeBridge = typeof window !== 'undefined' ? window.VioletAndroidBridge : undefined;
+  if (typeof nativeBridge?.testEndpoint === 'function') {
     try {
-      const nativeResult = JSON.parse(nativeTest(cleanEp)) as { reachable?: boolean; latencyMs?: number | null; host?: string; port?: number; detail?: string };
+      const nativeResult = JSON.parse(nativeBridge.testEndpoint(cleanEp)) as { reachable?: boolean; latencyMs?: number | null; host?: string; port?: number; detail?: string };
       return {
         reachable: Boolean(nativeResult.reachable),
         latencyMs: nativeResult.latencyMs ?? null,
