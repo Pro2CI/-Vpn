@@ -76,3 +76,230 @@ kotlin = kotlin.replace('Не удалось запустить VLESS:', 'Не �
 native.write_text(kotlin, encoding="utf-8")
 
 print("Patched public feeds, Base64/URI parsing, response limits, and Xray share-link dispatch (VLESS/VMess/Trojan/SS).")
+
+
+# The WebView must not display CONNECTED merely because the native process started.
+# A request issued by the app process is routed by Android through the VPN's default
+# route unless the VPN engine explicitly protects/excludes that socket.
+bridge_path = Path("src/services/androidVpnBridge.ts")
+bridge = bridge_path.read_text(encoding="utf-8")
+
+connect_start = bridge.find("export function connectNativeAnyProtocol(")
+connect_end = bridge.find("\nexport function connectNativeWireGuard", connect_start)
+if connect_start < 0 or connect_end < 0:
+    raise RuntimeError("Cannot safely patch androidVpnBridge.ts: connectNativeAnyProtocol markers changed")
+
+connect_impl = """const CONNECTABLE_NATIVE_PROTOCOLS = new Set<ProfileProtocol>([
+  'wireguard', 'vless', 'vmess', 'trojan', 'shadowsocks',
+]);
+
+export function connectNativeAnyProtocol(protocol: ProfileProtocol, configText: string, splitMode: SplitTunnelMode, packageNames: string[]) {
+  const bridge = window.VioletAndroidBridge;
+  if (!isNativeAndroidBridgeAvailable() || !bridge) return false;
+  if (!CONNECTABLE_NATIVE_PROTOCOLS.has(protocol)) return false;
+  if (typeof bridge.hasNativeCore === 'function' && !bridge.hasNativeCore(protocol)) return false;
+
+  const packagesJson = JSON.stringify(packageNames);
+  if (typeof bridge.connectAny === 'function') {
+    bridge.connectAny(protocol, configText, splitMode, packagesJson);
+    return true;
+  }
+  if (protocol === 'wireguard') {
+    bridge.connect(configText, splitMode, packagesJson);
+    return true;
+  }
+  return false;
+}
+"""
+bridge = bridge[:connect_start] + connect_impl + bridge[connect_end:]
+
+# Treat native "connected" as "core started"; promote it to the UI's CONNECTED
+# only after an external HTTPS request succeeds through Android's VPN routing.
+subscribe_start = bridge.find("export function subscribeNativeVpnEvents(")
+if subscribe_start < 0:
+    raise RuntimeError("Cannot safely patch androidVpnBridge.ts: subscribeNativeVpnEvents marker missing")
+
+subscribe_impl = """async function verifyVpnDataPlane(): Promise<void> {
+  const endpoints = [
+    'https://api.ipify.org?format=json',
+    'https://api64.ipify.org?format=json',
+  ];
+  let lastError = 'нет ответа от контрольного сервера';
+
+  for (const endpoint of endpoints) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5500);
+    try {
+      const separator = endpoint.includes('?') ? '&' : '?';
+      const response = await fetch(endpoint + separator + 'probe=' + Date.now(), {
+        method: 'GET',
+        cache: 'no-store',
+        credentials: 'omit',
+        redirect: 'error',
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        lastError = 'HTTP ' + response.status;
+        continue;
+      }
+      const payload = await response.json() as { ip?: unknown };
+      if (typeof payload.ip === 'string' && payload.ip.length >= 7) return;
+      lastError = 'контрольный сервер вернул некорректный ответ';
+    } catch (error) {
+      lastError = error instanceof Error && error.name === 'AbortError'
+        ? 'тайм-аут проверки трафика'
+        : (error instanceof Error ? error.message : String(error));
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
+  throw new Error('Реальный трафик через VPN не подтверждён: ' + lastError);
+}
+
+let vpnProbeGeneration = 0;
+
+export function subscribeNativeVpnEvents(onStateChange: (status: ConnectionStatus, error?: string) => void) {
+  if (typeof window === 'undefined') return () => {};
+  vpnProbeGeneration += 1;
+  window.onVioletVpnState = (state, error) => {
+    if (state === 'connected') {
+      const generation = ++vpnProbeGeneration;
+      onStateChange('connecting', 'Проверяем реальную передачу данных через VPN…');
+      void verifyVpnDataPlane().then(() => {
+        if (generation === vpnProbeGeneration) onStateChange('connected');
+      }).catch((reason: unknown) => {
+        if (generation !== vpnProbeGeneration) return;
+        vpnProbeGeneration += 1;
+        try {
+          window.VioletAndroidBridge?.disconnect();
+        } catch {
+          // Preserve the original connectivity failure for the UI.
+        }
+        const message = reason instanceof Error ? reason.message : String(reason);
+        onStateChange('disconnected', message);
+      });
+      return;
+    }
+
+    if (state === 'disconnected' || state === 'disconnecting') {
+      vpnProbeGeneration += 1;
+    }
+    if (['connecting', 'disconnected', 'disconnecting'].includes(state)) {
+      onStateChange(state as ConnectionStatus, error || undefined);
+    }
+  };
+  return () => {
+    vpnProbeGeneration += 1;
+    delete window.onVioletVpnState;
+  };
+}
+"""
+bridge = bridge[:subscribe_start] + subscribe_impl
+bridge_path.write_text(bridge, encoding="utf-8")
+
+# Apply a consistent glass/ambient visual treatment to the real React screen
+# after the original source archive has been extracted.
+css_path = Path("src/index.css")
+css = css_path.read_text(encoding="utf-8")
+premium_marker = "/* Violet VPN premium interface */"
+if premium_marker not in css:
+    css += r"""
+
+/* Violet VPN premium interface */
+:root {
+  color-scheme: dark;
+  --violet-accent: #9b8cff;
+  --violet-accent-strong: #7865ff;
+  --violet-surface: rgba(24, 21, 39, .74);
+  --violet-border: rgba(191, 177, 255, .16);
+}
+html, body, #root {
+  min-height: 100%;
+  background:
+    radial-gradient(ellipse at 14% 8%, rgba(114, 75, 231, .19), transparent 34%),
+    radial-gradient(ellipse at 88% 78%, rgba(35, 132, 184, .13), transparent 36%),
+    #09080f;
+}
+body {
+  position: relative;
+  isolation: isolate;
+  color: #f5f2ff;
+  overflow-x: hidden;
+}
+body::before, body::after {
+  content: "";
+  position: fixed;
+  z-index: -1;
+  pointer-events: none;
+  width: min(62vw, 660px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  filter: blur(78px);
+  opacity: .24;
+  will-change: transform;
+}
+body::before {
+  top: -22%;
+  left: -18%;
+  background: radial-gradient(circle, rgba(129, 94, 255, .66), transparent 68%);
+  animation: violet-drift-a 22s ease-in-out infinite alternate;
+}
+body::after {
+  right: -22%;
+  bottom: -28%;
+  background: radial-gradient(circle, rgba(42, 172, 194, .42), transparent 68%);
+  animation: violet-drift-b 27s ease-in-out infinite alternate;
+}
+@keyframes violet-drift-a {
+  from { transform: translate3d(0, 0, 0) scale(.92); }
+  to { transform: translate3d(13vw, 12vh, 0) scale(1.12); }
+}
+@keyframes violet-drift-b {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(-12vw, -10vh, 0) scale(1.14); }
+}
+#root [class*="rounded-2xl"],
+#root [class*="rounded-3xl"] {
+  border-color: var(--violet-border);
+  box-shadow: 0 16px 46px rgba(0, 0, 0, .18), inset 0 1px 0 rgba(255,255,255,.035);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+#root button {
+  transition: transform .18s ease, box-shadow .22s ease, border-color .22s ease, filter .22s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+#root button:active { transform: scale(.975); }
+#root button:focus-visible, #root input:focus-visible, #root textarea:focus-visible {
+  outline: 2px solid rgba(169, 151, 255, .9);
+  outline-offset: 3px;
+}
+#root button[class*="bg-violet-"],
+#root button[class*="bg-purple-"],
+#root button[class*="from-violet-"],
+#root button[class*="from-purple-"] {
+  box-shadow: 0 10px 30px rgba(115, 86, 255, .25), inset 0 1px 0 rgba(255,255,255,.16);
+}
+#root button[class*="bg-violet-"]:hover,
+#root button[class*="bg-purple-"]:hover,
+#root button[class*="from-violet-"]:hover,
+#root button[class*="from-purple-"]:hover {
+  filter: brightness(1.09);
+  box-shadow: 0 14px 38px rgba(115, 86, 255, .34), inset 0 1px 0 rgba(255,255,255,.2);
+}
+#root input, #root textarea, #root select {
+  border-color: rgba(191, 177, 255, .17);
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+  }
+}
+"""
+    css_path.write_text(css, encoding="utf-8")
+
+print("Applied subscription-feed parsing, native-protocol allowlist, HTTPS data-plane confirmation, and Violet glass/ambient UI styling.")
