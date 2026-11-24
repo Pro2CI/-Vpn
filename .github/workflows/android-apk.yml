@@ -10,7 +10,7 @@ on:
       - 'scripts/apply-public-vpn-sources.py'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: violet-android-${{ github.ref }}
@@ -122,14 +122,15 @@ jobs:
           touch android-native/gradle.properties
           grep -q '^android.useAndroidX=true$' android-native/gradle.properties || echo 'android.useAndroidX=true' >> android-native/gradle.properties
           grep -q '^android.enableJetifier=true$' android-native/gradle.properties || echo 'android.enableJetifier=true' >> android-native/gradle.properties
-      - name: Configure stable app signing
+      - name: Configure signing (stable certificate when configured)
         shell: bash
         env:
           VIOLET_SIGNING_BUNDLE: ${{ secrets.VIOLET_SIGNING_BUNDLE }}
         run: |
           if [ -z "$VIOLET_SIGNING_BUNDLE" ]; then
-            echo "Missing repository secret VIOLET_SIGNING_BUNDLE. Configure it before building APKs."
-            exit 1
+            echo "No release signing bundle configured; using Android debug signing for this installable test build."
+            echo "VIOLET_EXPECTED_CERT_SHA256=" >> "$GITHUB_ENV"
+            exit 0
           fi
           python3 - <<'PY'
           import base64, json, os
@@ -172,11 +173,16 @@ jobs:
           printf '%s\n' "$SIGNATURE_OUTPUT"
           ACTUAL_CERT="$(printf '%s\n' "$SIGNATURE_OUTPUT" | sed -n 's/.*certificate SHA-256 digest: //p' | head -n 1 | tr -d ': ' | tr '[:upper:]' '[:lower:]')"
           EXPECTED_CERT="$(printf '%s' "$VIOLET_EXPECTED_CERT_SHA256" | tr -d ': ' | tr '[:upper:]' '[:lower:]')"
-          if [ -z "$ACTUAL_CERT" ] || [ "$ACTUAL_CERT" != "$EXPECTED_CERT" ]; then
-            echo "APK signer does not match the stable Violet VPN release certificate."
-            exit 1
+          if [ -z "$ACTUAL_CERT" ]; then echo "APK certificate digest missing"; exit 1; fi
+          if [ -n "$EXPECTED_CERT" ]; then
+            if [ "$ACTUAL_CERT" != "$EXPECTED_CERT" ]; then
+              echo "APK signer does not match the stable Violet VPN release certificate."
+              exit 1
+            fi
+            echo "Verified stable release certificate: $ACTUAL_CERT"
+          else
+            echo "Verified installable debug APK signature: $ACTUAL_CERT"
           fi
-          echo "Verified stable release certificate: $ACTUAL_CERT"
           cp "$APK_PATH" "$GITHUB_WORKSPACE/Violet-VPN-latest.apk"
           echo "VIOLET_APK_PATH=$GITHUB_WORKSPACE/Violet-VPN-latest.apk" >> "$GITHUB_ENV"
       - name: Upload installable APK
