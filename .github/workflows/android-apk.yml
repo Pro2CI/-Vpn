@@ -30,7 +30,7 @@ jobs:
           unzip -q Violet-VPN-source-corrected.zip -d /tmp/violet-source
           test -f /tmp/violet-source/violet-work/package.json
           test -f /tmp/violet-source/violet-work/android-native/src/main/AndroidManifest.xml
-          rsync -a --delete --exclude='.git/' /tmp/violet-source/violet-work/ ./
+          rsync -a --delete --exclude='.git/' --exclude='/scripts/***' --exclude='/.github/***' /tmp/violet-source/violet-work/ ./
       - name: Apply public VPN source integration
         run: python3 scripts/apply-public-vpn-sources.py
       - name: Upload extracted source for remote review
