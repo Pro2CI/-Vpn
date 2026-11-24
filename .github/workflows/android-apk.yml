@@ -153,7 +153,7 @@ jobs:
           body: |
             Автоматическая Android-сборка Violet VPN.
             Версия Android: 2.1.${{ github.run_number }}
-            Код версии: ${{ 10000 + github.run_number }}
+            Код версии Android формируется автоматически и уникален для сборки.
             APK: Violet-VPN-latest.apk
           files: Violet-VPN-latest.apk
           fail_on_unmatched_files: true
