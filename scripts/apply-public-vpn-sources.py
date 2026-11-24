@@ -461,7 +461,7 @@ android_bridge_source = android_bridge_path.read_text(encoding="utf-8")
 if "fetchSubscription?:" not in android_bridge_source:
     android_bridge_source = android_bridge_source.replace(
         "  getState: () => string;",
-        "  getState: () => string;\\n  fetchSubscription?: (url: string) => string;"
+        "  getState: () => string;\n  fetchSubscription?: (url: string) => string;"
     )
 android_bridge_path.write_text(android_bridge_source, encoding="utf-8")
 auto_search_path.write_text(auto_search_source, encoding="utf-8")
