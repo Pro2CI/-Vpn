@@ -1381,7 +1381,7 @@ auto_source = auto_source.replace("vless|hysteria2|hy2|trojan|vmess|ss", "vless|
 feed_start = auto_source.find("const PUBLIC_CORS_GITHUB_FEEDS = [")
 if feed_start < 0:
     raise RuntimeError("Build 49: public feed list marker missing")
-feed_end = auto_source.find("\\n];", feed_start)
+feed_end = auto_source.find("\n];", feed_start)
 if feed_end < 0:
     raise RuntimeError("Build 49: public feed list terminator missing")
 feed_end += 3
