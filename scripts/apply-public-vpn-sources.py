@@ -49,6 +49,8 @@ source = source.replace(
 )
 source = source.replace("JSON.parse(atob(match[2].split('#')[0].trim()))", "JSON.parse(decodeBase64Utf8(match[2].split('#')[0].trim()))")
 source = source.replace("configText: line,", "configText: candidate,")
+source = source.replace("const u = new URL(line.replace(", "const u = new URL(candidate.replace(")
+source = source.replace("function parseSubscriptionLines(", "export function parseSubscriptionLines(")
 source = source.replace(
     "const text = await resp.text();\n          const parsed",
     "const text = await resp.text();\n          if (text.length > 5_000_000) throw new Error('Feed exceeds 5 MB limit');\n          const parsed"
@@ -73,6 +75,60 @@ kotlin = kotlin.replace('В VLESS-ссылке не найден outbound', 'В 
 kotlin = kotlin.replace('VLESS-ссылка не содержит допустимый outbound', 'Ссылка не содержит допустимый outbound')
 kotlin = kotlin.replace('VLESS подключён через Xray-core', 'Xray подключён через Xray-core')
 kotlin = kotlin.replace('Не удалось запустить VLESS:', 'Не удалось запустить Xray:')
+
+# Route Violet's own HTTPS verification request through the VPN instead of bypassing it.
+kotlin = kotlin.replace(
+    '''                if (splitMode == "exclude") {
+                    ifaceBuilder.excludeApplication(packageName)
+                    packages.forEach { pkg -> ifaceBuilder.excludeApplication(pkg) }
+                } else if (splitMode == "include" && packages.isNotEmpty()) {
+                    packages.forEach { pkg -> ifaceBuilder.includeApplication(pkg) }
+                } else {
+                    ifaceBuilder.excludeApplication(packageName)
+                }''',
+    '''                if (splitMode == "exclude") {
+                    packages.forEach { pkg -> ifaceBuilder.excludeApplication(pkg) }
+                } else if (splitMode == "include" && packages.isNotEmpty()) {
+                    (packages + packageName).distinct().forEach { pkg -> ifaceBuilder.includeApplication(pkg) }
+                }'''
+)
+kotlin = kotlin.replace(
+    '''            builder.addDisallowedApplication(packageName)
+            tun = builder.establish()''',
+    '''            if (splitMode == "exclude") {
+                packages.forEach { pkg -> builder.addDisallowedApplication(pkg) }
+            } else if (splitMode == "include" && packages.isNotEmpty()) {
+                (packages + packageName).distinct().forEach { pkg -> builder.addAllowedApplication(pkg) }
+            }
+            tun = builder.establish()'''
+)
+kotlin = kotlin.replace(
+    "connectWithOptionalLibbox(protocol, rawConfig)",
+    "connectWithOptionalLibbox(protocol, rawConfig, splitMode, packages)"
+)
+kotlin = kotlin.replace(
+    "private fun connectWithOptionalLibbox(protocol: String, rawConfig: String)",
+    "private fun connectWithOptionalLibbox(protocol: String, rawConfig: String, splitMode: String, packages: ArrayList<String>)"
+)
+kotlin = kotlin.replace(
+    "connectXrayShareLink(rawConfig)",
+    "connectXrayShareLink(rawConfig, splitMode, packages)"
+)
+kotlin = kotlin.replace(
+    "private fun connectXrayShareLink(shareLink: String)",
+    "private fun connectXrayShareLink(shareLink: String, splitMode: String, packages: ArrayList<String>)"
+)
+kotlin = kotlin.replace(
+    '''            builder.addDisallowedApplication(packageName)
+            tun = builder.establish()''',
+    '''            if (splitMode == "exclude") {
+                packages.forEach { pkg -> builder.addDisallowedApplication(pkg) }
+            } else if (splitMode == "include" && packages.isNotEmpty()) {
+                (packages + packageName).distinct().forEach { pkg -> builder.addAllowedApplication(pkg) }
+            }
+            tun = builder.establish()'''
+)
+
 native.write_text(kotlin, encoding="utf-8")
 
 print("Patched public feeds, Base64/URI parsing, response limits, and Xray share-link dispatch (VLESS/VMess/Trojan/SS).")
@@ -158,6 +214,23 @@ subscribe_impl = """async function verifyVpnDataPlane(): Promise<void> {
 
 let vpnProbeGeneration = 0;
 
+export function waitForNativeVpnConnection(timeoutMs = 25000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const target = window as Window & { onVioletVpnVerifiedState?: (state: 'connected' | 'disconnected', errorMessage?: string) => void };
+    const previous = target.onVioletVpnVerifiedState;
+    let settled = false;
+    const finish = (connected: boolean) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      target.onVioletVpnVerifiedState = previous;
+      resolve(connected);
+    };
+    const timer = window.setTimeout(() => finish(false), timeoutMs);
+    target.onVioletVpnVerifiedState = (state) => finish(state === 'connected');
+  });
+}
+
 export function subscribeNativeVpnEvents(onStateChange: (status: ConnectionStatus, error?: string) => void) {
   if (typeof window === 'undefined') return () => {};
   vpnProbeGeneration += 1;
@@ -166,7 +239,7 @@ export function subscribeNativeVpnEvents(onStateChange: (status: ConnectionStatu
       const generation = ++vpnProbeGeneration;
       onStateChange('connecting', 'Проверяем реальную передачу данных через VPN…');
       void verifyVpnDataPlane().then(() => {
-        if (generation === vpnProbeGeneration) onStateChange('connected');
+        if (generation === vpnProbeGeneration) { onStateChange('connected'); (window as Window & { onVioletVpnVerifiedState?: (state: 'connected' | 'disconnected', errorMessage?: string) => void }).onVioletVpnVerifiedState?.('connected'); }
       }).catch((reason: unknown) => {
         if (generation !== vpnProbeGeneration) return;
         vpnProbeGeneration += 1;
@@ -177,6 +250,7 @@ export function subscribeNativeVpnEvents(onStateChange: (status: ConnectionStatu
         }
         const message = reason instanceof Error ? reason.message : String(reason);
         onStateChange('disconnected', message);
+        (window as Window & { onVioletVpnVerifiedState?: (state: 'connected' | 'disconnected', errorMessage?: string) => void }).onVioletVpnVerifiedState?.('disconnected', message);
       });
       return;
     }
@@ -186,6 +260,7 @@ export function subscribeNativeVpnEvents(onStateChange: (status: ConnectionStatu
     }
     if (['connecting', 'disconnected', 'disconnecting'].includes(state)) {
       onStateChange(state as ConnectionStatus, error || undefined);
+      if (state === 'disconnected') (window as Window & { onVioletVpnVerifiedState?: (state: 'connected' | 'disconnected', errorMessage?: string) => void }).onVioletVpnVerifiedState?.('disconnected', error || undefined);
     }
   };
   return () => {
@@ -196,6 +271,23 @@ export function subscribeNativeVpnEvents(onStateChange: (status: ConnectionStatu
 """
 bridge = bridge[:subscribe_start] + subscribe_impl
 bridge_path.write_text(bridge, encoding="utf-8")
+
+# Wait for the native tunnel and the HTTPS data-plane check before reporting success.
+app_path = Path("src/App.tsx")
+app_source = app_path.read_text(encoding="utf-8")
+app_source = app_source.replace(
+    "  subscribeNativeVpnEvents,",
+    "  subscribeNativeVpnEvents,\n  waitForNativeVpnConnection,"
+)
+app_source = app_source.replace(
+    "        if (launched) {\n          return true;\n        }",
+    "        if (launched) {\n          return await waitForNativeVpnConnection(25000);\n        }"
+)
+app_source = app_source.replace(
+    "void handleRunAutoConnect('all', false);",
+    "void handleRunAutoConnect('all', true);"
+)
+app_path.write_text(app_source, encoding="utf-8")
 
 # Apply a consistent glass/ambient visual treatment to the real React screen
 # after the original source archive has been extracted.
@@ -418,6 +510,29 @@ package_path.write_text(json.dumps(package_data, ensure_ascii=False, indent=2) +
 
 print("Added an isolated tunnel data-plane probe module and four Node test cases.")
 
+tests_dir.joinpath("subscriptionParser.test.mjs").write_text("""import test from 'node:test';
+import assert from 'node:assert/strict';
+import { parseSubscriptionLines } from '../../src/services/autoSearchClient.ts';
+
+test('parses a VLESS URI embedded in a decorated feed line', () => {
+  const uri = 'vless://00000000-0000-4000-8000-000000000001@example.com:443?encryption=none#test';
+  const parsed = parseSubscriptionLines('node: ' + uri + ' source=public', 'test feed', 'all');
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].endpoint, 'example.com:443');
+  assert.equal(parsed[0].configText, uri);
+});
+
+test('decodes URL-safe Base64 subscriptions before parsing', () => {
+  const uri = 'vless://00000000-0000-4000-8000-000000000001@example.org:443?encryption=none';
+  const encoded = Buffer.from(uri, 'utf8').toString('base64url');
+  const parsed = parseSubscriptionLines(encoded, 'base64 feed', 'all');
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].endpoint, 'example.org:443');
+});
+""", encoding="utf-8")
+
+
+
 
 # Do not import Hysteria2 share links into this Xray-only path. Hysteria2/TUIC
 # remain unavailable until a sing-box engine is added to the Android package.
@@ -511,6 +626,12 @@ if 'protocol.lowercase() in setOf("vless", "vmess", "trojan", "shadowsocks", "ss
     raise RuntimeError("Native Xray protocol dispatch patch did not apply")
 if "connectXrayShareLink" not in native_check:
     raise RuntimeError("Xray share-link converter rename did not apply")
+if "excludeApplication(packageName)" in native_check or "addDisallowedApplication(packageName)" in native_check:
+    raise RuntimeError("VPN app is still excluded; HTTPS tunnel verification would bypass the VPN")
+if "connectWithOptionalLibbox(protocol, rawConfig, splitMode, packages)" not in native_check:
+    raise RuntimeError("Xray split-tunnel settings are not passed to the native engine")
+if "builder.addAllowedApplication(pkg)" not in native_check:
+    raise RuntimeError("Xray include-app split-tunnel routing patch did not apply")
 
 print("Filtered unsupported Hysteria2 links, normalized nullable latency props, and verified native Xray dispatch.")
 
