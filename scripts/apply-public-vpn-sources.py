@@ -1371,6 +1371,91 @@ probe_path.write_text(probe_source, encoding="utf-8")
 print("Build 48: native HTTPS feed fetch, active online status, native TCP latency, REALITY-first ranking, and native tunnel data-plane probe installed.")
 
 
+# Build 49: never select protocols the bundled Android engine cannot run.
+auto_path = Path("src/services/autoSearchClient.ts")
+auto_source = auto_path.read_text(encoding="utf-8")
+auto_source = auto_source.replace("vless|hysteria2|hy2|trojan|vmess|ss", "vless|trojan|vmess|ss")
+
+# Keep a small, frequently refreshed set of independently verified feeds. Native
+# HTTPS bridge calls are synchronous, so nine sequential sources would stall UI.
+feed_start = auto_source.find("const PUBLIC_CORS_GITHUB_FEEDS = [")
+if feed_start < 0:
+    raise RuntimeError("Build 49: public feed list marker missing")
+feed_end = auto_source.find("\\n];", feed_start)
+if feed_end < 0:
+    raise RuntimeError("Build 49: public feed list terminator missing")
+feed_end += 3
+verified_feeds = """const PUBLIC_CORS_GITHUB_FEEDS = [
+  {
+    name: 'Au1rxx — hourly HTTP-verified V2Ray nodes',
+    url: 'https://raw.githubusercontent.com/Au1rxx/free-vpn-subscriptions/main/output/v2ray-base64.txt',
+  },
+  {
+    name: '0xRadikal — frequently refreshed verified top 100',
+    url: 'https://raw.githubusercontent.com/0xRadikal/Free-v2ray-Configs/main/top100.txt',
+  },
+  {
+    name: 'MorpheusAdam — verified daily subscription',
+    url: 'https://raw.githubusercontent.com/morpheusadam/v2ray-config/main/verified/configs_base64.txt',
+  },
+];"""
+auto_source = auto_source[:feed_start] + verified_feeds + auto_source[feed_end:]
+auto_path.write_text(auto_source, encoding="utf-8")
+
+# The Android "offline" badge now first asks Android whether an internet-capable
+# network exists. NET_CAPABILITY_VALIDATED is deliberately not required because
+# Russian filtering can block Google's connectivity probe while internet remains.
+activity_path = Path("android-native/src/main/java/com/violetvpn/android/MainActivity.kt")
+activity = activity_path.read_text(encoding="utf-8")
+activity = activity.replace(
+    """        fun checkConnectivity(): String {
+            val targets = listOf(""",
+    """        fun checkConnectivity(): String {
+            try {
+                val manager = this@MainActivity.getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
+                    as? android.net.ConnectivityManager
+                val network = manager?.activeNetwork
+                val capabilities = if (network != null) manager.getNetworkCapabilities(network) else null
+                if (capabilities?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true) {
+                    return JSONObject().put("online", true).put("source", "Android network capability").toString()
+                }
+            } catch (_: Exception) {
+            }
+            val targets = listOf(""",
+    1,
+)
+if "Android network capability" not in activity:
+    raise RuntimeError("Build 49: Android connectivity capability patch did not apply")
+activity_path.write_text(activity, encoding="utf-8")
+
+manifest_path = Path("android-native/src/main/AndroidManifest.xml")
+manifest = manifest_path.read_text(encoding="utf-8")
+if "android.permission.ACCESS_NETWORK_STATE" not in manifest:
+    root_match = re.search(r"<manifest\\b[^>]*>", manifest)
+    if not root_match:
+        raise RuntimeError("Build 49: cannot locate Android manifest root")
+    manifest = manifest[:root_match.end()] + '\\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />' + manifest[root_match.end():]
+manifest_path.write_text(manifest, encoding="utf-8")
+
+test_path = Path("scripts/tests/subscriptionParser.test.mjs")
+test_source = test_path.read_text(encoding="utf-8")
+if "does not emit Hysteria2" not in test_source:
+    test_source += """
+test('does not emit Hysteria2 nodes because the bundled Android Xray engine cannot run them', () => {
+  const parsed = parseSubscriptionLines(
+    'hysteria2://password@example.net:443?sni=example.net#unsupported',
+    'test feed',
+    'all'
+  );
+  assert.equal(parsed.length, 0);
+});
+"""
+test_path.write_text(test_source, encoding="utf-8")
+
+print("Build 49: filter unsupported Hysteria2 links, prioritize only verified feed sources, and use Android network capabilities for online status.")
+
+
+
 
 # Build 48: make Android connectivity, subscription discovery and endpoint checks native.
 auto_path = Path("src/services/autoSearchClient.ts")
