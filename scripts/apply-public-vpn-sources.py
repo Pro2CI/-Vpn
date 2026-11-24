@@ -356,11 +356,8 @@ export async function verifyVpnDataPlane(fetcher: typeof fetch = fetch): Promise
 }
 """, encoding="utf-8")
 
-import_marker = "import {ConnectionStatus, ProfileProtocol, SplitTunnelMode} from '../types/vpn';"
-if import_marker not in bridge:
-    raise RuntimeError("Cannot safely add data-plane helper import to androidVpnBridge.ts")
 if "from './vpnDataPlaneCheck'" not in bridge:
-    bridge = bridge.replace(import_marker, import_marker + "\nimport { verifyVpnDataPlane } from './vpnDataPlaneCheck';", 1)
+    bridge = "import { verifyVpnDataPlane } from './vpnDataPlaneCheck';\n" + bridge
 
 bridge, removed_probe = re.subn(
     r"async function verifyVpnDataPlane\(\): Promise<void> \{[\s\S]*?\n\}\n\n(?=let vpnProbeGeneration)",
