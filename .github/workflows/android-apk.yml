@@ -1,4 +1,5 @@
 name: Build Violet VPN APK
+# Rebuild on the latest bridge-injection fix
 
 on:
   workflow_dispatch:
