@@ -40,7 +40,7 @@ source = source.replace(
     "const clean = input.replace(/\\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');\n  const padded = clean + '='.repeat((4 - (clean.length % 4)) % 4);\n  const binary = atob(padded);"
 )
 source = source.replace(
-    "!decoded.includes('://') &&\n    !decoded.includes('[Interface]') &&\n    !/^[A-Za-z0-9+/=\\r\\n]+$/.test(decoded) === false",
+    "!decoded.includes('://') &&\n    !decoded.includes('[Interface]') &&\n    !/^[A-Za-z0-9+/=\\r\n]+$/.test(decoded) === false",
     "!decoded.includes('://') &&\n    !decoded.includes('[Interface]') &&\n    /^[A-Za-z0-9+/_=-]+$/.test(decoded.replace(/\\s+/g, ''))"
 )
 source = source.replace(
@@ -277,11 +277,11 @@ app_path = Path("src/App.tsx")
 app_source = app_path.read_text(encoding="utf-8")
 app_source = app_source.replace(
     "  subscribeNativeVpnEvents,",
-    "  subscribeNativeVpnEvents,\\n  waitForNativeVpnConnection,"
+    "  subscribeNativeVpnEvents,\n  waitForNativeVpnConnection,"
 )
 app_source = app_source.replace(
-    "        if (launched) {\\n          return true;\\n        }",
-    "        if (launched) {\\n          return await waitForNativeVpnConnection(25000);\\n        }"
+    "        if (launched) {\n          return true;\n        }",
+    "        if (launched) {\n          return await waitForNativeVpnConnection(25000);\n        }"
 )
 app_source = app_source.replace(
     "void handleRunAutoConnect('all', false);",
