@@ -510,6 +510,29 @@ package_path.write_text(json.dumps(package_data, ensure_ascii=False, indent=2) +
 
 print("Added an isolated tunnel data-plane probe module and four Node test cases.")
 
+tests_dir.joinpath("subscriptionParser.test.mjs").write_text("""import test from 'node:test';
+import assert from 'node:assert/strict';
+import { parseSubscriptionLines } from '../../src/services/autoSearchClient.ts';
+
+test('parses a VLESS URI embedded in a decorated feed line', () => {
+  const uri = 'vless://00000000-0000-4000-8000-000000000001@example.com:443?encryption=none#test';
+  const parsed = parseSubscriptionLines('node: ' + uri + ' source=public', 'test feed', 'all');
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].endpoint, 'example.com:443');
+  assert.equal(parsed[0].configText, uri);
+});
+
+test('decodes URL-safe Base64 subscriptions before parsing', () => {
+  const uri = 'vless://00000000-0000-4000-8000-000000000001@example.org:443?encryption=none';
+  const encoded = Buffer.from(uri, 'utf8').toString('base64url');
+  const parsed = parseSubscriptionLines(encoded, 'base64 feed', 'all');
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].endpoint, 'example.org:443');
+});
+""", encoding="utf-8")
+
+
+
 
 # Do not import Hysteria2 share links into this Xray-only path. Hysteria2/TUIC
 # remain unavailable until a sing-box engine is added to the Android package.
@@ -603,6 +626,12 @@ if 'protocol.lowercase() in setOf("vless", "vmess", "trojan", "shadowsocks", "ss
     raise RuntimeError("Native Xray protocol dispatch patch did not apply")
 if "connectXrayShareLink" not in native_check:
     raise RuntimeError("Xray share-link converter rename did not apply")
+if "excludeApplication(packageName)" in native_check or "addDisallowedApplication(packageName)" in native_check:
+    raise RuntimeError("VPN app is still excluded; HTTPS tunnel verification would bypass the VPN")
+if "connectWithOptionalLibbox(protocol, rawConfig, splitMode, packages)" not in native_check:
+    raise RuntimeError("Xray split-tunnel settings are not passed to the native engine")
+if "builder.addAllowedApplication(pkg)" not in native_check:
+    raise RuntimeError("Xray include-app split-tunnel routing patch did not apply")
 
 print("Filtered unsupported Hysteria2 links, normalized nullable latency props, and verified native Xray dispatch.")
 
