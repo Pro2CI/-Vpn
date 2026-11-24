@@ -8,6 +8,8 @@ on:
       - 'Violet-VPN-source-corrected.zip'
       - '.github/workflows/android-apk.yml'
       - 'scripts/apply-public-vpn-sources.py'
+      - 'scripts/apply-xray-json-support.py'
+      - 'scripts/tests/**'
 
 permissions:
   contents: write
