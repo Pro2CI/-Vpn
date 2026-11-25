@@ -22,8 +22,8 @@ jobs:
   build-apk:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-  env:
-    VIOLET_VERSION_NAME: "2.1.57"
+    env:
+      VIOLET_VERSION_NAME: "2.1.57"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -201,10 +201,10 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: violet-build-${{ github.run_number }}
-          name: Violet VPN 2.1.${{ github.run_number }}
+          name: Violet VPN 2.1.57
           body: |
             Автоматическая Android-сборка Violet VPN.
-            Версия Android: 2.1.${{ github.run_number }}
+            Версия Android: 2.1.57
             Код версии Android формируется автоматически и уникален для сборки.
             APK: Violet-VPN-latest.apk
           files: Violet-VPN-latest.apk
