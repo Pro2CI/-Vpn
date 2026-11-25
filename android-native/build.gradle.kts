@@ -4,6 +4,7 @@ plugins {
 }
 
 val violetBuildNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 3
+val violetVersionName = System.getenv("VIOLET_VERSION_NAME")?.takeIf { it.matches(Regex("2\\.1\\.\\d+")) } ?: "2.1.$violetBuildNumber"
 
 android {
     namespace = "com.violetvpn.android"
@@ -13,7 +14,7 @@ android {
         minSdk = 24
         targetSdk = 35
         versionCode = 10000 + violetBuildNumber
-        versionName = "2.1.$violetBuildNumber"
+        versionName = violetVersionName
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
